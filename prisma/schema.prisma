@@ -1,0 +1,226 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Customer {
+  id               BigInt           @id @default(autoincrement())
+  createdAt        DateTime?        @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime?        @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt        DateTime?        @map("deleted_at") @db.Timestamptz(6)
+  customerName     String           @map("customer_name")
+  phoneNumber      String           @unique(map: "idx_customers_phone_number") @map("phone_number")
+  pin              String
+  accountNumber    String           @unique(map: "idx_customers_account_number") @map("account_number")
+  bankName         String?          @map("bank_name")
+  accountHistories AccountHistory[]
+  accounts         Account[]
+  beneficiaries    Beneficiary[]
+  bill_payments    bill_payments[]
+  documents        Document[]
+  transactions     Transaction[]
+
+  @@index([deletedAt], map: "idx_customers_deleted_at")
+  @@map("customers")
+}
+
+model Account {
+  id            BigInt          @id @default(autoincrement())
+  createdAt     DateTime?       @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime?       @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt     DateTime?       @map("deleted_at") @db.Timestamptz(6)
+  customerId    BigInt          @map("customer_id")
+  accountNumber String          @unique(map: "idx_accounts_account_number") @map("account_number")
+  balance       Decimal         @default(0) @db.Decimal
+  currency      String?         @default("NGN")
+  bankName      String?         @map("bank_name")
+  customer      Customer        @relation(fields: [customerId], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_customers_accounts")
+  bill_payments bill_payments[]
+  transactions  Transaction[]
+
+  @@index([customerId], map: "idx_accounts_customer_id")
+  @@index([deletedAt], map: "idx_accounts_deleted_at")
+  @@map("accounts")
+}
+
+model Transaction {
+  id              BigInt          @id @default(autoincrement())
+  createdAt       DateTime?       @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime?       @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt       DateTime?       @map("deleted_at") @db.Timestamptz(6)
+  customerId      BigInt          @map("customer_id")
+  accountId       BigInt          @map("account_id")
+  receiverName    String          @map("receiver_name")
+  bankName        String?         @map("bank_name")
+  bankAccount     String          @map("bank_account")
+  accountNumber   String          @map("account_number")
+  amount          Decimal         @db.Decimal
+  balanceBefore   Decimal         @map("balance_before") @db.Decimal
+  balanceAfter    Decimal         @map("balance_after") @db.Decimal
+  transactionDate DateTime        @map("transaction_date") @db.Timestamptz(6)
+  status          String          @default("pending")
+  transactionType String          @map("transaction_type")
+  reference       String?         @unique(map: "idx_transactions_reference")
+  accountHistory  AccountHistory?
+  account         Account         @relation(fields: [accountId], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_accounts_transactions")
+  customer        Customer        @relation(fields: [customerId], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_customers_transactions")
+
+  @@index([accountId], map: "idx_transactions_account_id")
+  @@index([customerId], map: "idx_transactions_customer_id")
+  @@index([deletedAt], map: "idx_transactions_deleted_at")
+  @@map("transactions")
+}
+
+model AccountHistory {
+  id                  BigInt      @id @default(autoincrement())
+  createdAt           DateTime?   @map("created_at") @db.Timestamptz(6)
+  updatedAt           DateTime?   @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt           DateTime?   @map("deleted_at") @db.Timestamptz(6)
+  transactionId       BigInt      @unique(map: "idx_account_histories_transaction_id") @map("transaction_id")
+  customerId          BigInt      @map("customer_id")
+  customerPhoneNumber String      @map("customer_phone_number")
+  failedAmount        Decimal     @map("failed_amount") @db.Decimal
+  failedDate          DateTime    @map("failed_date") @db.Timestamptz(6)
+  failureReason       String?     @map("failure_reason")
+  status              String      @default("failed")
+  resolvedAt          DateTime?   @map("resolved_at") @db.Timestamptz(6)
+  escalatedAt         DateTime?   @map("escalated_at") @db.Timestamptz(6)
+  notes               String?
+  customer            Customer    @relation(fields: [customerId], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_account_histories_customer")
+  transaction         Transaction @relation(fields: [transactionId], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_transactions_account_history")
+
+  @@index([customerId], map: "idx_account_histories_customer_id")
+  @@index([deletedAt], map: "idx_account_histories_deleted_at")
+  @@map("account_histories")
+}
+
+model Document {
+  id           BigInt                 @id @default(autoincrement())
+  createdAt    DateTime?              @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime?              @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt    DateTime?              @map("deleted_at") @db.Timestamptz(6)
+  content      String
+  embedding    Unsupported("vector")?
+  metadata     Json?
+  documentType String?                @map("document_type")
+  user_id      BigInt?
+  customerId   BigInt?                @map("customer_id")
+  customer     Customer?              @relation(fields: [customerId], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_documents_customer")
+  users        users?                 @relation(fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_documents_user")
+
+  @@index([deletedAt], map: "idx_documents_deleted_at")
+  @@map("documents")
+}
+
+model Beneficiary {
+  id                BigInt    @id @default(autoincrement())
+  createdAt         DateTime? @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime? @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt         DateTime? @map("deleted_at") @db.Timestamptz(6)
+  customerId        BigInt    @map("customer_id")
+  recipientName     String    @map("recipient_name")
+  recipientPhone    String?   @map("recipient_phone")
+  accountNumber     String    @map("account_number")
+  bankName          String?   @map("bank_name")
+  bankAccount       String?   @map("bank_account")
+  nickname          String?
+  lastTransferredAt DateTime? @map("last_transferred_at") @db.Timestamptz(6)
+  transferCount     BigInt?   @default(0) @map("transfer_count")
+  customer          Customer  @relation(fields: [customerId], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_beneficiaries_customer")
+
+  @@index([accountNumber], map: "idx_beneficiaries_account_number")
+  @@index([customerId], map: "idx_beneficiaries_customer_id")
+  @@index([deletedAt], map: "idx_beneficiaries_deleted_at")
+  @@index([recipientPhone], map: "idx_beneficiaries_recipient_phone")
+  @@map("beneficiaries")
+}
+
+model bill_payments {
+  id             BigInt    @id @default(autoincrement())
+  created_at     DateTime? @db.Timestamptz(6)
+  updated_at     DateTime? @db.Timestamptz(6)
+  deleted_at     DateTime? @db.Timestamptz(6)
+  customer_id    BigInt
+  account_id     BigInt
+  payment_type   String
+  provider       String
+  phone_number   String?
+  meter_number   String?
+  account_number String?
+  amount         Decimal   @db.Decimal
+  balance_before Decimal   @db.Decimal
+  balance_after  Decimal   @db.Decimal
+  payment_date   DateTime  @db.Timestamptz(6)
+  status         String    @default("pending")
+  reference      String?   @unique(map: "idx_bill_payments_reference")
+  description    String?
+  accounts       Account   @relation(fields: [account_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_accounts_bill_payments")
+  customers      Customer  @relation(fields: [customer_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_customers_bill_payments")
+
+  @@index([account_id], map: "idx_bill_payments_account_id")
+  @@index([customer_id], map: "idx_bill_payments_customer_id")
+  @@index([deleted_at], map: "idx_bill_payments_deleted_at")
+}
+
+model conversations {
+  id           BigInt     @id @default(autoincrement())
+  created_at   DateTime?  @db.Timestamptz(6)
+  updated_at   DateTime?  @db.Timestamptz(6)
+  deleted_at   DateTime?  @db.Timestamptz(6)
+  user_id      BigInt?
+  whats_app_id String?    @unique(map: "idx_conversations_whats_app_id")
+  users        users?     @relation(fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_conversations_user")
+  messages     messages[]
+
+  @@index([deleted_at], map: "idx_conversations_deleted_at")
+}
+
+model messages {
+  id              BigInt         @id @default(autoincrement())
+  created_at      DateTime?      @db.Timestamptz(6)
+  updated_at      DateTime?      @db.Timestamptz(6)
+  deleted_at      DateTime?      @db.Timestamptz(6)
+  conversation_id BigInt?
+  content         String
+  role            String
+  whats_app_id    String?
+  conversations   conversations? @relation(fields: [conversation_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_conversations_messages")
+
+  @@index([deleted_at], map: "idx_messages_deleted_at")
+}
+
+model payments {
+  id             BigInt    @id @default(autoincrement())
+  created_at     DateTime? @db.Timestamptz(6)
+  updated_at     DateTime? @db.Timestamptz(6)
+  deleted_at     DateTime? @db.Timestamptz(6)
+  user_id        BigInt?
+  amount         Decimal   @db.Decimal
+  currency       String?   @default("NGN")
+  status         String
+  paystack_ref   String?   @unique(map: "idx_payments_paystack_ref")
+  transaction_id String?
+  users          users?    @relation(fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_payments_user")
+
+  @@index([deleted_at], map: "idx_payments_deleted_at")
+}
+
+model users {
+  id            BigInt          @id @default(autoincrement())
+  created_at    DateTime?       @db.Timestamptz(6)
+  updated_at    DateTime?       @db.Timestamptz(6)
+  deleted_at    DateTime?       @db.Timestamptz(6)
+  phone_number  String          @unique(map: "idx_users_phone_number")
+  name          String?
+  email         String?         @unique(map: "idx_users_email")
+  whats_app_id  String?         @unique(map: "idx_users_whats_app_id")
+  conversations conversations[]
+  documents     Document[]
+  payments      payments[]
+
+  @@index([deleted_at], map: "idx_users_deleted_at")
+}
