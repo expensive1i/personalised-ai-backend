@@ -1,0 +1,1831 @@
+Overview
+The eBills API is a robust REST API designed to facilitate seamless integration for purchasing services such as airtime, data, electricity bill payments, cable TV subscriptions, betting account funding, and ePINs (recharge cards printing). It also provides endpoints to check wallet balances, retrieve service variations, verify customer details, requery orders, and receive webhook notifications for order status updates.
+
+It allows developers to integrate all virtual top-up (VTU) and bill payment services available on the eBills platform with their applications (web apps, desktop apps & mobile apps, etc). You can also start your own VTU business by integrating our VTU API and reselling our services in Nigeria.
+
+As an API consumer, you will enjoy even cheaper prices. You will get data at a 10.00% discount, 3.00% discount on airtime, 1.50% discount on cable TV subscription, 1.50% discount on electricity bills payment, 4.00% discount on ePINS (recharge cards printing), 0.20% discount on betting account funding, and ₦0.00 service fees. Please see the commission rates for more information.
+
+We have built an internal infrastructure for the best SIM hosting capabilities. We have our SIMs internally hosted on our dedicated server. These SIMs automatically get VTU requests in nanoseconds, and they constantly deliver our VTU services instantly by dialling the required USSD codes and sending SMSs where necessary. In most cases, we send requests directly to the network operators’ API (no third parties involved). We have also connected our cable TV subscription and electricity bill payment services directly to the providers’ gateways (Premium Direct Connections). We also leverage direct connections to banks where necessary. Now you know why our prices are cheap yet reliable.
+
+This documentation provides detailed instructions on authentication, making requests, handling responses, and integrating with the eBills API. Sample code snippets demonstrate integration in various programming languages.
+
+All failed orders are REFUNDED automatically.
+
+Base URL
+The base URL for all API requests is:
+
+https://ebills.africa/wp-json
+
+Authentication
+The eBills API requires authentication for most endpoints to ensure secure access. Users must be logged into an eBills account as a Reseller. Some endpoints (e.g., variations) are publicly accessible without authentication.
+
+Authentication Requirements
+eBills User Account:
+A valid eBills user account with the reseller role is required for transactional endpoints.
+The account must complete KYC (Know Your Customer) verification for higher transaction limits:
+Tier 1: Email verified (up to ₦50,000 daily limit).
+Tier 2: BVN verified (up to ₦500,000 daily limit).
+Tier 3: Face, ID and address verified (unlimited).
+IP Whitelisting (Optional):
+Your server’s IP address can be added to the whitelist in the developer tab of your account settings page for authenticated endpoints. This process is optional if you want to allow API requests from any IP. If you whitelist IPs, only the requests from the whitelisted IPs will be allowed.
+Obtaining an Access Token
+Endpoint: POST /jwt-auth/v1/token
+
+Description: Authenticates a user and returns a JSON Web Token (JWT) for accessing protected eBills API endpoints.
+
+Authentication: Required (Email or Username, Password).
+
+Parameters:
+
+Parameter	Type	Required	Description
+username	String	Yes	The user’s eBills account email or username.
+password	String	Yes	The user’s eBills account password.
+Sample Login Request:
+
+curl -X POST https://ebills.africa/wp-json/jwt-auth/v1/token \ -H "Content-Type: application/json" \ -d '{ "username": "your_ebills_email_or_username", "password": "your_ebills_password" }'
+
+Sample Error Response:
+
+{"code":"[jwt_auth] incorrect_password","message":"ERROR: The username or password you entered is incorrect. Lost your password?","data":{"status":403}}
+
+Sample Success Response:
+
+{"token":"your_jwt_token","user_email":"your_name@email.com","user_nicename":"your_name","user_display_name":"your_name"}
+
+Use the token in the Authorization header for all subsequent requests:
+
+Authorization: Bearer your_jwt_token
+
+Important Notes:
+
+The token expires after 7 days. You are advised to obtain a new access token regularly (before every request) or at least once or twice a week, to ensure your system continues to run smoothly.
+For security purposes, only one (the latest) token remains active. If you generate a new token, the older ones become inactive immediately.
+The /api/v2/variations/data and /api/v2/variations/tv endpoints do not require authentication.
+Endpoints
+The endpoints are organized to reflect the integration flow: checking balances, purchasing airtime, retrieving data variations before purchasing data, verifying customers before purchasing electricity, betting, or TV subscriptions, retrieving TV variations before purchasing TV subscriptions, purchasing ePINs, and requerying orders.
+
+1. Check Wallet Balance
+Endpoint: GET /api/v2/balance
+
+Description: Retrieves the current wallet balance of the authenticated user.
+
+Authentication: Required (Bearer token).
+
+Parameters: None
+
+Sample Request:
+
+curl -X GET https://ebills.africa/wp-json/api/v2/balance \ -H "Authorization: Bearer your_jwt_token"
+
+Sample Success Response:
+
+{ "code": "success", "message": "Wallet balance retrieved successfully!", "data": { "balance": 5000.00, "currency": "NGN" } }
+
+Error Responses:
+
+500: wallet_error – Unable to retrieve wallet balance.
+403: rest_forbidden – Unauthorized access (invalid token or IP not whitelisted).
+Sample Error Response:
+
+{ "code": "wallet_error", "message": "Unable to retrieve wallet balance. Please try again.", "data": { "status": 500} }
+
+2. Purchase Airtime (VTU): Airtime Recharge API (MTN, Glo, Airtel & 9mobile)
+Endpoint: POST /api/v2/airtime
+
+Description: Purchases airtime for a specified phone number and network provider.
+
+Authentication: Required (Bearer token).
+
+Parameters:
+
+Parameter	Type	Required	Description
+request_id	String	Yes	Unique identifier (max 50 chars).
+phone	String	Yes	Phone number (e.g., 08012345678 or +2348012345678).
+service_id	String	Yes	Network provider (mtn, airtel, glo, 9mobile).
+amount	Integer	Yes	Airtime amount in NGN (min/max varies).
+Validation:
+
+Phone number: 11-16 digits, supports +234 format.
+Amount: Min ₦10 (MTN), ₦50 (others); max ₦50,000.
+Service ID must match phone number’s network prefix.
+Sample Request:
+
+curl -X POST https://ebills.africa/wp-json/api/v2/airtime \ -H "Authorization: Bearer your_jwt_token" \ -H "Content-Type: application/json" \ -d '{ "request_id": "req_123456789", "phone": "08012345678", "service_id": "mtn", "amount": 100 }'
+
+Sample Processing Order Response:
+
+{ "code": "success", "message": "ORDER PROCESSING", "data": { "order_id": 12345, "status": "processing-api", "product_name": "Airtime", "service_name": "MTN", "phone": "08012345678", "amount": 100, "discount": "2.50", "amount_charged": "97.50", "initial_balance": "5000.00", "final_balance": "4902.50", "request_id": "req_123456789" } }
+
+Sample Completed Order Response:
+
+{ "code": "success", "message": "ORDER COMPLETED", "data": { "order_id": 12345, "status": "completed-api", "product_name": "Airtime", "service_name": "MTN", "phone": "08012345678", "amount": 100, "discount": "2.50", "amount_charged": "97.50", "initial_balance": "5000.00", "final_balance": "4902.50", "request_id": "req_123456789" } }
+
+Sample Refunded Order Response:
+
+{ "code": "success", "message": "ORDER REFUNDED", "data": { "order_id": 12345, "status": "refunded", "product_name": "Airtime", "service_name": "MTN", "phone": "08012345678", "amount": 100, "discount": "0.00", "amount_charged": "0.00", "initial_balance": "5000.00", "final_balance": "5000.00", "request_id": "req_123456789" } }
+
+Error Responses:
+
+400: missing_fields – Required parameters missing.
+400: invalid_service – Invalid service ID or phone number.
+400: below_minimum_amount – Amount below minimum.
+400: above_maximum_amount – Amount above maximum.
+402: insufficient_funds – Insufficient wallet balance.
+409: duplicate_request_id – Request ID already exists.
+409: duplicate_order – Duplicate order within 3 minutes.
+403: rest_forbidden – Unauthorized access.
+3. Get Data Variations
+Endpoint: GET /api/v2/variations/data
+
+Description: Retrieves available data plan variations for network providers. Optionally filter by service_id.
+
+Authentication: Not required (public endpoint).
+
+Parameters:
+
+Parameter	Type	Required	Description
+service_id	String	No	Network provider (mtn, airtel, glo, 9mobile, smile).
+Validation:
+
+Service ID must be one of: mtn, airtel, glo, 9mobile, smile.
+Sample Request (All Variations):
+
+curl -X GET https://ebills.africa/wp-json/api/v2/variations/data
+
+Sample Response (All Variations) – Fetch all variations via the endpoint URL:
+
+{
+"code": "success",
+"message": "All Variations Retrieved",
+"product": "Data",
+"data": [
+{
+"variation_id": 354466,
+"service_name": "9mobile",
+"service_id": "9mobile",
+"data_plan": "1.4GB - 30 Days",
+"price": "1199",
+"availability": "Available"
+},
+{
+"variation_id": 354458,
+"service_name": "9mobile",
+"service_id": "9mobile",
+"data_plan": "190GB - 180 Days",
+"price": "149999",
+"availability": "Available"
+},
+{
+"variation_id": 354446,
+"service_name": "Glo",
+"service_id": "glo",
+"data_plan": "475GB - 90 Days",
+"price": "74999",
+"availability": "Available"
+},
+{
+"variation_id": 354453,
+"service_name": "Glo",
+"service_id": "glo",
+"data_plan": "2.6GB - 30 Days",
+"price": "999",
+"availability": "Available"
+},
+{
+"variation_id": 354431,
+"service_name": "Airtel",
+"service_id": "airtel",
+"data_plan": "2GB - 30 Days",
+"price": "1499",
+"availability": "Available"
+},
+{
+"variation_id": 354444,
+"service_name": "Airtel",
+"service_id": "airtel",
+"data_plan": "300MB - 1 Day",
+"price": "299",
+"availability": "Available"
+},
+{
+"variation_id": 354394,
+"service_name": "MTN",
+"service_id": "mtn",
+"data_plan": "2GB + 2 mins - 30 Days",
+"price": "1499",
+"availability": "Available"
+},
+{
+"variation_id": 354406,
+"service_name": "MTN",
+"service_id": "mtn",
+"data_plan": "1GB + 1.5 mins - 1 Day",
+"price": "499",
+"availability": "Available"
+},
+{
+"variation_id": 354110,
+"service_name": "Smile",
+"service_id": "smile",
+"data_plan": "SmileVoice ONLY 500 - 90days",
+"price": "9000",
+"availability": "Available"
+},
+{
+"variation_id": 354119,
+"service_name": "Smile",
+"service_id": "smile",
+"data_plan": "2GB Bigga - 30 Days",
+"price": "1850",
+"availability": "Available"
+},
+{
+"variation_id": 2682,
+"service_name": "MTN",
+"service_id": "mtn",
+"data_plan": "1GB (SME) - 30 Days",
+"price": "699",
+"availability": "Unavailable"
+},
+{
+"variation_id": 245982,
+"service_name": "Airtel",
+"service_id": "airtel",
+"data_plan": "500MB (SME) - 30 Days",
+"price": "429",
+"availability": "Unavailable"
+},
+{
+"variation_id": 258989,
+"service_name": "Glo",
+"service_id": "glo",
+"data_plan": "1GB (SME) - 30 Days",
+"price": "499",
+"availability": "Available"
+}
+]
+}
+
+Sample Request (Filtered by MTN):
+
+curl -X GET https://ebills.africa/wp-json/api/v2/variations/data?service_id=mtn
+
+Sample Response (Filtered by MTN) – Fetch all variations via the endpoint URL:
+
+{
+"code": "success",
+"message": "Mtn Variations Retrieved",
+"product": "Data",
+"data": [
+{
+"variation_id": 354376,
+"service_name": "MTN",
+"service_id": "mtn",
+"data_plan": "450GB (Broadband) - 90 Days",
+"price": "74999",
+"availability": "Available"
+},
+{
+"variation_id": 354377,
+"service_name": "MTN",
+"service_id": "mtn",
+"data_plan": "480GB - 90 Days",
+"price": "89999",
+"availability": "Available"
+},
+{
+"variation_id": 354405,
+"service_name": "MTN",
+"service_id": "mtn",
+"data_plan": "1.5GB - 2 Days",
+"price": "599",
+"availability": "Available"
+},
+{
+"variation_id": 354406,
+"service_name": "MTN",
+"service_id": "mtn",
+"data_plan": "1GB + 1.5 mins - 1 Day",
+"price": "499",
+"availability": "Available"
+},
+{
+"variation_id": 2682,
+"service_name": "MTN",
+"service_id": "mtn",
+"data_plan": "1GB (SME) - 30 Days",
+"price": "699",
+"availability": "Unavailable"
+},
+{
+"variation_id": 2681,
+"service_name": "MTN",
+"service_id": "mtn",
+"data_plan": "2GB (SME) - 30 Days",
+"price": "1399",
+"availability": "Unavailable"
+}
+]
+}
+
+Error Responses:
+
+400: invalid_service_id – Invalid service ID provided.
+404: no_product – Product ID invalid or not variable.
+4. Purchase Data: Cheapest Data Reseller API (MTN, Glo, Airtel, 9mobile, & Smile)
+Endpoint: POST /api/v2/data
+
+Description: Purchases a data plan for a specified phone number and network provider. It provides you with the ultimate solution to all your data API questions, like CG Data API, MTN SME Data Reseller API, Airtel Corporate Data Gifting API (SME), Glo Corporate Data Gifting API (SME), MTN Corporate Data Gifting API, 9mobile Corporate Data Gifting API (SME), and Smile data API.
+
+Authentication: Required (Bearer token).
+
+Parameters:
+
+Parameter	Type	Required	Description
+request_id	String	Yes	Unique identifier (max 50 chars).
+phone	String	Yes	Phone number (e.g., 08012345678 or +2348012345678).
+service_id	String	Yes	Network provider (mtn, airtel, glo, 9mobile, smile).
+variation_id	String	Yes	Data plan’s variation ID (from /api/v2/variations/data).
+Validation:
+
+Phone number must match service provider’s prefix.
+Variation ID must be valid (retrieve via /api/v2/variations/data).
+Wallet balance must cover the plan’s reseller price.
+Sample Request:
+
+curl -X POST https://ebills.africa/wp-json/api/v2/data \ -H "Authorization: Bearer your_jwt_token" \ -H "Content-Type: application/json" \ -d '{ "request_id": "req_123456789", "phone": "08012345678", "service_id": "mtn", "variation_id": "2682" }'
+
+Sample Processing Order Response:
+
+{ "code": "success", "message": "ORDER PROCESSING", "data": { "order_id": 12346, "status": "processing-api", "product_name": "Data", "variation_id": "2682", "service_name": "MTN", "data_plan": "1GB (SME) - 30 Days", "phone": "08012345678", "amount": 300.00, "discount": "50.00", "amount_charged": "250.00", "initial_balance": "4902.50", "final_balance": "4652.50", "request_id": "req_123456789" } }
+
+Sample Completed Order Response:
+
+{ "code": "success", "message": "ORDER COMPLETED", "data": { "order_id": 12346, "status": "completed-api", "product_name": "Data", "variation_id": "2682", "service_name": "MTN", "data_plan": "1GB (SME) - 30 Days", "phone": "08012345678", "amount": 300.00, "discount": "50.00", "amount_charged": "250.00", "initial_balance": "4902.50", "final_balance": "4652.50", "request_id": "req_123456789" } }
+
+Sample Refunded Order Response:
+
+{ "code": "success", "message": "ORDER REFUNDED", "data": { "order_id": 12346, "status": "refunded", "product_name": "Data", "variation_id": "2682", "service_name": "MTN", "data_plan": "1GB (SME) - 30 Days", "phone": "08012345678", "amount": 300.00, "discount": "00.00", "amount_charged": "0.00", "initial_balance": "4902.50", "final_balance": "4902.50", "request_id": "req_123456789" } }
+
+Error Responses:
+
+400: missing_fields – Required parameters missing.
+400: invalid_service – Invalid service ID or phone number.
+400: invalid_variation_id – Invalid variation ID.
+402: insufficient_funds – Insufficient wallet balance.
+409: duplicate_request_id – Request ID already exists.
+409: duplicate_order – Duplicate order within 3 minutes.
+403: rest_forbidden – Unauthorized access.
+5. Verify Customer: Meter/Account Number, IUC/Smartcard Number, and Betting ID Verification API
+Endpoint: POST /api/v2/verify-customer
+
+Description: Verifies customer details for electricity, cable TV, or betting services. Use this before purchasing electricity, cable TV, or funding betting accounts.
+
+Authentication: Required (Bearer token).
+
+Parameters:
+
+Parameter	Type	Required	Description
+customer_id	String	Yes	Customer ID (meter/account number, smartcard number, or betting ID).
+service_id	String	Yes	Service provider (dstv, gotv, startimes, ikeja-electric, eko-electric, kano-electric, portharcourt-electric, jos-electric, ibadan-electric, kaduna-electric, abuja-electric, enugu-electric, benin-electric, aba-electric, yola-electric, 1xBet, BangBet, Bet9ja, BetKing, BetLand, BetLion, BetWay, CloudBet, LiveScoreBet, MerryBet, NaijaBet, NairaBet, SupaBet).
+variation_id	String	Yes*	Meter type (prepaid, postpaid) for electricity.
+*Required only for electricity services.
+
+Sample Request (Electricity):
+
+curl -X POST https://ebills.africa/wp-json/api/v2/verify-customer \ -H "Authorization: Bearer your_jwt_token" \ -H "Content-Type: application/json" \ -d '{ "customer_id": "12345678901", "service_id": "ikeja-electric", "variation_id": "prepaid" }'
+
+Sample Response (Electricity):
+
+{ "code": "success", "message": "Customer Details Retrieved", "data": { "service_name": "Ikeja (IKEDC)", "customer_id": "12345678901", "customer_name": "Chukwuemeka Ajayi Muhammed", "customer_address": "123 Lagos Street", "customer_arrears": 0, "outstanding": 0, "meter_number": "12345678901", "account_number": "2345908905", "district": "Ikeja", "service_band": "A", "min_purchase_amount": 1000, "max_purchase_amount": 100000, "business_unit": "Ikeja", "customer_account_type": "NMD" } }
+
+Sample Request (Betting):
+
+curl -X POST https://ebills.africa/wp-json/api/v2/verify-customer \ -H "Authorization: Bearer your_jwt_token" \ -H "Content-Type: application/json" \ -d '{ "customer_id": "12345", "service_id": "Bet9ja" }'
+
+Sample Response (Betting):
+
+{ "code": "success", "message": "Customer Details Retrieved", "data": { "service_name": "Bet9ja", "customer_id": "12345", "customer_name": "John Smith", "customer_username": "jsmith", "customer_email_address": "john@example.com", "customer_phone_number": "08098765432", "minimum_amount": 100, "maximum_amount": 100000 } }
+
+Sample Request (Cable TV):
+
+curl -X POST https://ebills.africa/wp-json/api/v2/verify-customer \ -H "Authorization: Bearer your_jwt_token" \ -H "Content-Type: application/json" \ -d '{ "customer_id": "1234567890", "service_id": "dstv" }'
+
+Sample Response (Cable TV):
+
+{ "code": "success", "message": "Customer Details Retrieved", "data": { "service_name": "DStv", "customer_id": "1234567890", "customer_name": "Aisha Chioma Oreoluwa", "status": "Active", "due_date": "2025-05-01", "balance": 0, "current_bouquet": "Compact", "renewal_amount": 19000 } }
+
+Error Responses:
+
+400: missing_fields – Required parameters missing.
+400: invalid_field – Invalid service or variation ID.
+400: failure – Verification failed (e.g., invalid customer ID).
+403: rest_forbidden – Unauthorized access.
+6. Purchase Electricity: Electricity Bills Payment API – Buy Power/Pay Electricity Bills Online in Nigeria
+Endpoint: POST /api/v2/electricity
+
+Description: Purchases electricity units for a specified meter/account number. Verify the customer first using /api/v2/verify-customer.
+
+Authentication: Required (Bearer token).
+
+Parameters:
+
+Parameter	Type	Required	Description
+request_id	String	Yes	Unique identifier (max 50 chars).
+customer_id	String	Yes	Meter or account number.
+service_id	String	Yes	Electricity provider (ikeja-electric, eko-electric, kano-electric, portharcourt-electric, jos-electric, ibadan-electric, kaduna-electric, abuja-electric, enugu-electric, benin-electric, aba-electric, yola-electric).
+
+ikeja-electric = Ikeja (IKEDC): Lagos State (Ikeja) – Abule Egba, Akowonjo, Ikeja, Ikorodu, Oshodi, Shomolu
+eko-electric = Eko (EKEDC): Lagos State (Eko) – Apapa, Lekki, Ibeju, Island, Agbara, Ojo, Festac, Ijora, Mushin, Orile
+kano-electric = Kano (KEDCO): Kano State, Katsina State, Jigawa State
+portharcourt-electric = Portharcourt (PHED): Rivers, Akwa Ibom, Bayelsa, Cross River
+jos-electric = Jos (JED): Bauchi, Benue, Gombe, Plateau
+ibadan-electric = Ibadan (IBEDC): Oyo, Ogun, Osun, Kwara, Parts of Niger, Ekiti and Kogi States
+kaduna-electric = Kaduna (KAEDCO): Kaduna| Kebbi| Sokoto| Zamfara
+abuja-electric = Abuja (AEDC): Federal Capital Territory (Abuja), Kogi State, Niger State, Nassarawa State
+enugu-electric = Enugu (EEDC): Anambra State, Enugu State, Imo State, Ebonyi State
+benin-electric = Benin (BEDC): Delta, Edo, Ekiti, and Ondo State
+aba-electric = Aba (ABEDC): Abia State
+yola-electric = Yola (YEDC): Adamawa, Taraba, Borno, & Yobe
+variation_id	String	Yes	Meter type (prepaid, postpaid).
+amount	Integer	Yes	Amount in NGN (min varies, max ₦100,000).
+Validation:
+
+Customer ID verified via /api/v2/verify-customer.
+Amount must meet minimum purchase and arrears requirements.
+Discounts: 0.1% to 1.5% (provider-dependent).
+Sample Request:
+
+curl -X POST https://ebills.africa/wp-json/api/v2/electricity \ -H "Authorization: Bearer your_jwt_token" \ -H "Content-Type: application/json" \ -d '{ "request_id": "req_123456789", "customer_id": "12345678901", "service_id": "ikeja-electric", "variation_id": "prepaid", "amount": 1000 }'
+
+Sample Processing Order Response:
+
+{ "code": "success", "message": "ORDER PROCESSING", "data": { "order_id": 12347, "status": "processing-api", "product_name": "Electricity", "service_name": "Ikeja (IKEDC)", "customer_id": "12345678901", "customer_name": "Chukwuemeka Ajayi Muhammed", "customer_address": "123 Lagos Street", "token": null, "units": null, "band": "A", "amount": 10000, "amount_charged": "9850.00", "discount": "150.00", "initial_balance": "40652.50", "final_balance": "30802.50", "request_id": "req_123456789" } }
+
+Sample Completed Order Response:
+
+{ "code": "success", "message": "ORDER COMPLETED", "data": { "order_id": 12347, "status": "completed-api", "product_name": "Electricity", "service_name": "Ikeja (IKEDC)", "customer_id": "12345678901", "customer_name": "Chukwuemeka Ajayi Muhammed", "customer_address": "123 Lagos Street", "token": "1234-5678-9012-3456", "units": "80.5", "band": "A", "amount": 10000, "amount_charged": "9850.00", "discount": "150.00", "initial_balance": "40652.50", "final_balance": "30802.50", "request_id": "req_123456789" } }
+
+Sample Refunded Order Response:
+
+{ "code": "success", "message": "ORDER REFUNDED", "data": { "order_id": 12347, "status": "refunded", "product_name": "Electricity", "service_name": "Ikeja (IKEDC)", "customer_id": "12345678901", "customer_name": "Chukwuemeka Ajayi Muhammed", "customer_address": "123 Lagos Street", "token": null, "units": null, "band": "A", "amount": 10000, "amount_charged": "0.00", "discount": "0.00", "initial_balance": "40652.50", "final_balance": "40652.50", "request_id": "req_123456789" } }
+
+Error Responses:
+
+400: missing_fields – Required parameters missing.
+400: invalid_service_id – Invalid service ID.
+400: invalid_variation_id – Invalid variation ID.
+400: below_minimum_amount – Amount below minimum.
+400: below_customer_arrears – Amount below arrears.
+402: insufficient_funds – Insufficient wallet balance.
+409: duplicate_request_id – Request ID already exists.
+409: duplicate_order – Duplicate order within 3 minutes.
+403: rest_forbidden – Unauthorized access.
+7. Fund Betting Account: Betting Accounts Funding API in Nigeria
+Endpoint: POST /api/v2/betting
+
+Description: Funds a betting account for a specified customer ID. Verify the customer first using /api/v2/verify-customer.
+
+Authentication: Required (Bearer token).
+
+Parameters:
+
+Parameter	Type	Required	Description
+request_id	String	Yes	Unique identifier (max 50 chars).
+customer_id	String	Yes	Betting account ID.
+service_id	String	Yes	Betting provider (1xBet, BangBet, Bet9ja, BetKing, BetLand, BetLion, BetWay, CloudBet, LiveScoreBet, MerryBet, NaijaBet, NairaBet, SupaBet).
+amount	Integer	Yes	Amount in NGN (min ₦100, max ₦100,000).
+Validation:
+
+Customer ID verified via /api/v2/verify-customer.
+Discounts: 0% (some providers), 0.2% (others).
+Sample Request:
+
+curl -X POST https://ebills.africa/wp-json/api/v2/betting \ -H "Authorization: Bearer your_jwt_token" \ -H "Content-Type: application/json" \ -d '{ "request_id": "req_123456789", "customer_id": "12345", "service_id": "Bet9ja", "amount": 500 }'
+
+Sample Processing Order Response:
+
+{ "code": "success", "message": "ORDER PROCESSING", "data": { "order_id": 12349, "status": "processing-api", "product_name": "Betting", "service_name": "Bet9ja", "customer_id": "12345", "customer_name": "John Smith", "customer_username": "jsmith", "customer_email_address": "john@example.com", "customer_phone_number": "08098765432", "amount": 500, "amount_charged": "500.00", "discount": "0.00", "initial_balance": "1265.50", "final_balance": "765.50", "request_id": "req_123456789" } }
+
+Sample Completed Order Response:
+
+{ "code": "success", "message": "ORDER COMPLETED", "data": { "order_id": 12349, "status": "completed-api", "product_name": "Betting", "service_name": "Bet9ja", "customer_id": "12345", "customer_name": "John Smith", "customer_username": "jsmith", "customer_email_address": "john@example.com", "customer_phone_number": "08098765432", "amount": 500, "amount_charged": "500.00", "discount": "0.00", "initial_balance": "1265.50", "final_balance": "765.50", "request_id": "req_123456789" } }
+
+Sample Refunded Order Response:
+
+{ "code": "success", "message": "ORDER REFUNDED", "data": { "order_id": 12349, "status": "refunded", "product_name": "Betting", "service_name": "Bet9ja", "customer_id": "12345", "customer_name": "John Smith", "customer_username": "jsmith", "customer_email_address": "john@example.com", "customer_phone_number": "08098765432", "amount": 500, "amount_charged": "0.00", "discount": "0.00", "initial_balance": "1265.50", "final_balance": "1265.50", "request_id": "req_123456789" } }
+
+Error Responses:
+
+400: missing_fields – Required parameters missing.
+400: invalid_service_id – Invalid service ID.
+400: below_minimum_amount – Amount below minimum.
+400: above_maximum_amount – Amount above maximum.
+402: insufficient_funds – Insufficient wallet balance.
+409: duplicate_request_id – Request ID already exists.
+409: duplicate_order – Duplicate order within 3 minutes.
+403: rest_forbidden – Unauthorized access.
+8. Get Cable TV Variations
+Endpoint: GET /api/v2/variations/tv
+
+Description: Retrieves available cable TV package variations. Optionally filter by service_id.
+
+Authentication: Not required (public endpoint).
+
+Parameters:
+
+Parameter	Type	Required	Description
+service_id	String	No	Cable TV provider (dstv, gotv, startimes, showmax).
+Validation:
+
+Service ID must be one of: dstv, gotv, startimes, showmax.
+Sample Request (All Variations):
+
+curl -X GET https://ebills.africa/wp-json/api/v2/variations/tv
+
+Sample Response (All Variations) – Fetch all variations via the endpoint URL:
+
+{
+"code": "success",
+"message": "All Variations Retrieved",
+"product": "Cable TV",
+"data": [
+{
+"variation_id": 3719,
+"service_name": "DStv",
+"service_id": "dstv",
+"package_bouquet": "Padi",
+"price": "4400",
+"availability": "Available"
+},
+{
+"variation_id": 3713,
+"service_name": "DStv",
+"service_id": "dstv",
+"package_bouquet": "Premium",
+"price": "44500",
+"availability": "Available"
+},
+{
+"variation_id": 3708,
+"service_name": "DStv",
+"service_id": "dstv",
+"package_bouquet": "Padi + ExtraView",
+"price": "10400",
+"availability": "Available"
+},
+{
+"variation_id": 2697,
+"service_name": "GOtv",
+"service_id": "gotv",
+"package_bouquet": "Smallie",
+"price": "1900",
+"availability": "Available"
+},
+{
+"variation_id": 2696,
+"service_name": "GOtv",
+"service_id": "gotv",
+"package_bouquet": "Jinja",
+"price": "3900",
+"availability": "Available"
+},
+{
+"variation_id": 2693,
+"service_name": "Startimes",
+"service_id": "startimes",
+"package_bouquet": "Nova (Antenna)",
+"price": "1900",
+"availability": "Available"
+},
+{
+"variation_id": 2692,
+"service_name": "Startimes",
+"service_id": "startimes",
+"package_bouquet": "Nova (Dish)",
+"price": "1900",
+"availability": "Available"
+},
+{
+"variation_id": 354084,
+"service_name": "Showmax",
+"service_id": "showmax",
+"package_bouquet": "Mobile Only",
+"price": "1600",
+"availability": "Available"
+},
+{
+"variation_id": 354083,
+"service_name": "Showmax",
+"service_id": "showmax",
+"package_bouquet": "Full",
+"price": "3500",
+"availability": "Available"
+}
+]
+}
+
+Sample Request (Filtered by DStv):
+
+curl -X GET https://ebills.africa/wp-json/api/v2/variations/tv?service_id=dstv
+
+Sample Response (Filtered by DStv) – Fetch all variations via the endpoint URL:
+
+{
+"code": "success",
+"message": "Dstv Variations Retrieved",
+"product": "Cable TV",
+"data": [
+{
+"variation_id": 3718,
+"service_name": "DStv",
+"service_id": "dstv",
+"package_bouquet": "Yanga",
+"price": "6000",
+"availability": "Available"
+},
+{
+"variation_id": 3717,
+"service_name": "DStv",
+"service_id": "dstv",
+"package_bouquet": "Confam",
+"price": "11000",
+"availability": "Available"
+},
+{
+"variation_id": 3715,
+"service_name": "DStv",
+"service_id": "dstv",
+"package_bouquet": "Compact",
+"price": "19000",
+"availability": "Available"
+},
+{
+"variation_id": 3714,
+"service_name": "DStv",
+"service_id": "dstv",
+"package_bouquet": "Compact Plus",
+"price": "30000",
+"availability": "Available"
+},
+{
+"variation_id": 3713,
+"service_name": "DStv",
+"service_id": "dstv",
+"package_bouquet": "Premium",
+"price": "44500",
+"availability": "Available"
+},
+{
+"variation_id": 3708,
+"service_name": "DStv",
+"service_id": "dstv",
+"package_bouquet": "Padi + ExtraView",
+"price": "10400",
+"availability": "Available"
+},
+{
+"variation_id": 2699,
+"service_name": "DStv",
+"service_id": "dstv",
+"package_bouquet": "ExtraView",
+"price": "6000",
+"availability": "Available"
+}
+]
+}
+
+Error Responses:
+
+400: invalid_service_id – Invalid service ID provided.
+404: no_product – Product ID invalid or not variable.
+9. Purchase Cable TV Subscription: Cable TV Bills Payment API – Purchase/Subscribe Cable TV (DStv, GOtv, Startimes, & Showmax)
+Endpoint: POST /api/v2/tv
+
+Description: Purchases a cable TV subscription for a specified smartcard/IUC number. Verify the customer first using /api/v2/verify-customer.
+
+Authentication: Required (Bearer token).
+
+Parameters:
+
+Parameter	Type	Required	Description
+request_id	String	Yes	Unique identifier (max 50 chars).
+customer_id	String	Yes	Smartcard or IUC number.
+service_id	String	Yes	Provider (dstv, gotv, startimes, showmax).
+variation_id	String	Yes	Package/bouquet variation ID (from /api/v2/variations/tv).
+subscription_type	String	No	The subscription type (change or renew). If not set, it defaults to change. It is recommended that you always specify your subscription type for every request.
+
+Applicable to DStv and GOtv only.
+
+change: This option enables you to activate a DStv/GOtv decoder afresh or modify its current package/bouquet using the smartcard number. It is designed for new or returning DStv/GOtv subscribers looking to update their bouquet.
+
+renew: This option allows you to renew a DStv/GOtv decoder subscription using its smartcard number. This option is strictly for a returning customer who desires to renew his/her current DStv/GOtv package/bouquet. Using this option, there may be a discount on the renewal price [according to the discretion of MultiChoice] as opposed to the actual cost of the customer’s DStv/GOtv package/bouquet.
+amount	Integer	No	An amount (eg, 5500) is required for the renew subscription type. Note: You are to first verify the DStv/GOtv smartcard number using the /api/v2/verify-customer endpoint and use the renewal_amount obtained from the /api/v2/verify-customer endpoint as the amount in your request payload.
+
+For the change subscription type, the amount defaults to the package price unless a custom amount is set.
+
+Applicable to DStv, GOtv and Startimes only.
+Validation:
+
+Customer ID verified via /api/v2/verify-customer (except Showmax).
+Variation ID must be valid (retrieve via /api/v2/variations/tv).
+Discounts: 1% (DStv, GOtv, Showmax), 1.5% (Startimes).
+Sample Request:
+
+curl -X POST https://ebills.africa/wp-json/api/v2/tv \ -H "Authorization: Bearer your_jwt_token" \ -H "Content-Type: application/json" \ -d '{ "request_id": "req_123456789", "customer_id": "1234567890", "service_id": "dstv", "variation_id": "3713" }'
+
+Sample Processing Order Response:
+
+{ "code": "success", "message": "ORDER PROCESSING", "data": { "order_id": 12348, "status": "processing-api", "product_name": "Cable TV", "service_name": "DStv", "customer_id": "1234567890", "customer_name": "Aisha Chioma Oreoluwa", "amount": 10500, "amount_charged": "10395.00", "discount": "105.00", "initial_balance": "3660.50", "final_balance": "1265.50", "request_id": "req_123456789" } }
+
+Sample Completed Order Response:
+
+{ "code": "success", "message": "ORDER COMPLETED", "data": { "order_id": 12348, "status": "completed-api", "product_name": "Cable TV", "service_name": "DStv", "customer_id": "1234567890", "customer_name": "Aisha Chioma Oreoluwa", "amount": 10500, "amount_charged": "10395.00", "discount": "105.00", "initial_balance": "3660.50", "final_balance": "1265.50", "request_id": "req_123456789" } }
+
+Sample Refunded Order Response:
+
+{ "code": "success", "message": "ORDER REFUNDED", "data": { "order_id": 12348, "status": "refunded", "product_name": "Cable TV", "service_name": "DStv", "customer_id": "1234567890", "customer_name": "Aisha Chioma Oreoluwa", "amount": 10500, "amount_charged": "0.00", "discount": "0.00", "initial_balance": "3660.50", "final_balance": "3660.50", "request_id": "req_123456789" } }
+
+Error Responses:
+
+400: missing_fields – Required parameters missing.
+400: invalid_service_id – Invalid service ID.
+400: invalid_variation_id – Invalid variation ID.
+402: insufficient_funds – Insufficient wallet balance.
+409: duplicate_request_id – Request ID already exists.
+409: duplicate_order – Duplicate order within 3 minutes.
+403: rest_forbidden – Unauthorized access.
+10. Purchase ePINs: Recharge Cards Printing API in Nigeria
+Endpoint: POST /api/v2/epins
+
+Description: Purchases recharge cards PINs (ePINs) for a specified network provider.
+
+Authentication: Required (Bearer token).
+
+Parameters:
+
+Parameter	Type	Required	Description
+request_id	String	Yes	Unique identifier (max 50 chars).
+service_id	String	Yes	Network provider (mtn, airtel, glo, 9mobile).
+value	Integer	Yes	PIN denomination (100, 200, 500).
+quantity	Integer	Yes	Number of PINs (min 1, max 40).
+Validation:
+
+Value: 100, 200, or 500.
+Quantity: Min 1, Max 40.
+Discounts: 4.00% (9mobile), 0.50% (MTN), 1% (others).
+Sample Request:
+
+curl -X POST https://ebills.africa/wp-json/api/v2/epins \ -H "Authorization: Bearer your_jwt_token" \ -H "Content-Type: application/json" \ -d '{ "request_id": "req_123456789", "service_id": "mtn", "value": 500, "quantity": 1 }'
+
+Sample Processing Order Response:
+
+{ "code": "success", "message": "ORDER PROCESSING", "data": { "order_id": 12350, "status": "processing-api", "product_name": "ePINs", "service_name": "MTN", "value": 500, "quantity": 1, "amount": 500, "discount": "5.00", "amount_charged": "495.00", "initial_balance": "765.50", "final_balance": "270.50", "request_id": "req_123456789", "epins": null } }
+
+Sample Completed Order Response:
+
+{ "code": "success", "message": "ORDER COMPLETED", "data": { "order_id": 12350, "status": "completed-api", "product_name": "ePINs", "service_name": "MTN", "value": 500, "quantity": 1, "amount": 500, "discount": "5.00", "amount_charged": "495.00", "initial_balance": "765.50", "final_balance": "270.50", "request_id": "req_123456789", "epins": [{"amount":"500","pin":"89656105591652958","serial":"00000033739289258","instruction":"To Recharge: Dial *311*PIN# SEND "}] } }
+
+Sample Refunded Order Response:
+
+{ "code": "success", "message": "ORDER REFUNDED", "data": { "order_id": 12350, "status": "refunded", "product_name": "ePINs", "service_name": "MTN", "value": 500, "quantity": 1, "amount": 500, "discount": "0.00", "amount_charged": "0.00", "initial_balance": "765.50", "final_balance": "765.50", "request_id": "req_123456789", "epins": null } }
+
+Error Responses:
+
+400: missing_fields – Required parameters missing.
+400: invalid_service – Invalid service ID.
+400: invalid_value – Invalid denomination.
+400: below_minimum_quantity – Quantity below minimum.
+400: above_maximum_quantity – Quantity above maximum.
+402: insufficient_funds – Insufficient wallet balance.
+409: duplicate_request_id – Request ID already exists.
+409: duplicate_order – Duplicate order within 3 minutes.
+403: rest_forbidden – Unauthorized access.
+11. Requery Order
+Endpoint: POST /api/v2/requery
+
+Description: Retrieves the status and details of an order by its request_id.
+
+Authentication: Required (Bearer token).
+
+Parameters:
+
+Parameter	Type	Required	Description
+request_id	String	Yes	Unique identifier of the order.
+Validation:
+
+Request ID must match an order for the authenticated user.
+Returns detailed order information.
+Sample Request:
+
+curl -X POST https://ebills.africa/wp-json/api/v2/requery \ -H "Authorization: Bearer your_jwt_token" \ -H "Content-Type: application/json" \ -d '{ "request_id": "req_123456789" }'
+
+Sample Processing Order Response (Data):
+
+{"code":"success","message":"ORDER PROCESSING","data":{"order_id":355960,"status":"processing-api","product_name":"Data","quantity":1,"amount":"98.01","amount_charged":"98.01","date_created":"2025-05-06 20:00:14","date_updated":"2025-05-06 20:00:25","request_id":"1017","meta_data":{"network":"MTN","data-plan":"110MB - 1 Day","phone":"08106223552"}}}
+
+Sample Completed Order Response (ePINs):
+
+{"code":"success","message":"ORDER COMPLETED","data":{"order_id":353817,"status":"completed-api","product_name":"ePINs","quantity":1,"amount":"100","amount_charged":"99.00","date_created":"2025-03-12 15:28:20","date_updated":"2025-03-12 15:29:32","request_id":"req_123456789","meta_data":{"network":"MTN","value_denomination":"100","epins_quantity":"1"},"epins":[{"Amount":"100","pin":"51555258498444514","serial_number":"00000032234996019","instruction":"To Recharge: Dial *555*PINNUMBER# SEND "}]}}
+
+Sample Refunded Order Response (Airtime):
+
+{"code":"success","message":"ORDER REFUNDED","data":{"order_id":354347,"status":"refunded","product_name":"Airtime","quantity":1,"amount":"10","amount_charged":"0.00","date_created":"2025-04-08 19:54:20","date_updated":"2025-04-08 19:54:25","request_id":"req_123456789","meta_data":{"network":"MTN","phone":"08106223552"}}}
+
+Error Responses:
+
+400: missing_request_id – Request ID not provided.
+404: order_not_found – No order found for the request ID.
+403: rest_forbidden – Unauthorized access.
+Possible Messages:
+
+ORDER COMPLETED – Status is completed-api.
+ORDER PROCESSING – Status is processing-api.
+ORDER QUEUED – Status is queued-api.
+ORDER INITIATED – Status is initiated-api.
+ORDER CANCELLED – Status is cancelled.
+ORDER PENDING – Status is pending.
+ORDER FAILED – Status is failed.
+ORDER REFUNDED – Status is refunded.
+ORDER ON-HOLD – Status is on-hold.
+Webhook Notifications
+Description: The eBills API sends webhook notifications to a user-specified URL when an order’s status changes to completed-api or refunded (for orders previously in an API-related status).
+
+Setup:
+
+Configure a valid HTTPS webhook URL on the developer tab of the account settings page.
+The URL must accept POST requests.
+Trigger Events:
+
+Order Completed: Status changes to completed-api (only when triggered manually by an administrator).
+Order Refunded: Status changes to refunded from an API-related status (e.g., initiated-api, processing-api).
+Payload:
+
+The webhook sends a JSON payload with order details, signed with an HMAC-SHA256 signature using the user’s PIN.
+
+Sample Payload:
+
+{ "order_id": 12345, "status": "completed-api", "product_name": "Airtime", "quantity": 1, "amount": "100.00", "amount_charged": "97.50", "date_created": "2025-04-12 10:00:00", "date_updated": "2025-04-12 10:01:00", "request_id": "req_123456789", "meta_data":{"network":"MTN","phone":"08106223552"}, "timestamp": 1744636800 }
+
+Headers:
+
+Content-Type: application/json
+X-Signature: HMAC-SHA256 signature of the payload.
+Signature Verification:
+
+Compute the HMAC-SHA256 of the payload using your user_pin and compare it with the X-Signature header.
+
+Sample Verification (Python):
+
+import hmac
+import hashlib
+import json
+
+def verify_webhook(payload, signature, user_pin):
+    computed_signature = hmac.new(
+        user_pin.encode('utf-8'),
+        json.dumps(payload, separators=(',', ':')).encode('utf-8'),
+        hashlib.sha256
+    ).hexdigest()
+    return hmac.compare_digest(computed_signature, signature)
+
+# Example
+payload = {...}  # Webhook payload
+signature = "received_x_signature"
+user_pin = "your_user_pin"
+is_valid = verify_webhook(payload, signature, user_pin)
+print("Signature valid:", is_valid)
+Expand
+Sample Verification (PHP):
+
+<?php
+
+// User PIN from your eBills account (stored securely, e.g., in environment variables or config)
+$user_pin = 'your_user_pin'; // Replace with your actual user PIN
+
+// Get the raw POST body
+$payload = file_get_contents('php://input');
+
+// Decode the JSON payload to access its data (optional, for processing)
+$payload_data = json_decode($payload, true);
+
+// Get the X-Signature header
+$received_signature = isset($_SERVER['HTTP_X_SIGNATURE']) ? $_SERVER['HTTP_X_SIGNATURE'] : '';
+
+// Compute the HMAC-SHA256 signature
+// The payload must be used as-is (raw JSON string, no extra whitespace)
+$computed_signature = hash_hmac('sha256', $payload, $user_pin);
+
+// Compare signatures securely
+if (hash_equals($computed_signature, $received_signature)) {
+    // Signature is valid, process the webhook
+    http_response_code(200); // Send 200 OK to acknowledge receipt
+
+    // Example: Log the payload or update order status
+    file_put_contents('webhook_log.txt', print_r($payload_data, true), FILE_APPEND);
+
+    // Example processing
+    if (isset($payload_data['order_id']) && isset($payload_data['status'])) {
+        $order_id = $payload_data['order_id'];
+        $status = $payload_data['status'];
+
+        // Update your database or system based on status
+        if ($status === 'completed-api') {
+            // Handle completed order (e.g., mark as fulfilled)
+            error_log("Order $order_id completed successfully");
+        } elseif ($status === 'refunded') {
+            // Handle refunded order (e.g., issue refund notification)
+            error_log("Order $order_id was refunded");
+        }
+    }
+
+    // Output a response (optional, eBills expects 200 status)
+    echo json_encode(['status' => 'success', 'message' => 'Webhook processed']);
+} else {
+    // Invalid signature
+    http_response_code(403); // Forbidden
+    echo json_encode(['status' => 'error', 'message' => 'Invalid signature']);
+}
+
+?>
+Expand
+Response:
+
+Expects a 200 OK response.
+Security:
+
+Use HTTPS for webhook URLs.
+Validate X-Signature to ensure authenticity.
+Store user_pin securely.
+Error Handling:
+
+Invalid or missing webhook URLs prevent notifications.
+Ensure endpoint availability to avoid missed notifications.
+Error Codes
+The API returns standard HTTP status codes and custom error codes:
+
+HTTP Status	Error Code	Description
+400	missing_fields	Required parameters missing.
+400	missing_request_id	Request ID not provided (/api/v2/requery).
+400	invalid_field	Invalid input (e.g., service_id, phone).
+400	invalid_service	Invalid service provider.
+400	invalid_service_id	Invalid service ID (/api/v2/variations/*).
+400	invalid_variation_id	Invalid variation ID.
+400	invalid_request_id	Request ID exceeds 50 characters.
+400	below_minimum_amount	Amount below minimum.
+400	above_maximum_amount	Amount above maximum.
+400	below_customer_arrears	Amount below arrears (electricity).
+400	invalid_product	Product ID invalid or unavailable.
+400	product_unavailable	Product out of stock.
+400	order_failed	Failed to create order.
+400	request_id_error	Failed to save request ID.
+400	failure	Verification failed (/api/v2/verify-customer).
+402	insufficient_funds	Insufficient wallet balance.
+403	jwt_auth_failed	Invalid Credentials.
+403	jwt_auth_invalid_token	Signature verification failed.
+403	rest_forbidden	Unauthorized access (invalid token, IP not whitelisted).
+404	rest_no_route	No route was found matching the URL and request method.
+404	no_product	Product ID invalid or not variable (/api/v2/variations/*).
+404	order_not_found	No order found for request ID (/api/v2/requery).
+409	duplicate_request	Request already processing.
+409	duplicate_request_id	Request ID already exists.
+409	duplicate_order	Duplicate order within 3 minutes.
+429	rate_limit_exceeded	Too many requests.
+429	wallet_busy	Wallet transaction in progress.
+500	wallet_error	Unable to retrieve wallet balance.
+Integration Guidelines
+Best Practices
+Unique Request IDs:
+Generate unique request_id values (e.g., req_20250412123456_abc).
+Store request_id for requery purposes.
+Error Handling:
+Handle HTTP status codes and error messages.
+Retry transient errors (e.g., wallet_busy) with exponential backoff.
+Rate Limiting:
+Respect the 3-minute lockout for duplicate orders.
+Cache variation data locally to reduce API calls.
+KYC Compliance:
+Complete KYC for higher daily limits (Tier 1: ₦50,000; Tier 2: ₦500,000; Tier 3: Unlimited).
+IP Whitelisting:
+Whitelist server IPs on the developer tab of the account settings page.
+Variations:
+Fetch valid variation_id values using /api/v2/variations/data and /api/v2/variations/tv before purchasing.
+Customer Verification:
+Use /api/v2/verify-customer before electricity, betting, or TV purchases to validate customer IDs.
+Webhooks:
+Configure secure HTTPS webhook endpoints.
+Verify signatures using user_pin.
+Handle duplicates by checking order_id and timestamp.
+Order Requery:
+Use /api/v2/requery for status checks if webhooks fail or are not enough.
+Map request_id to orders for correlation.
+Sample Integration Codes
+Python (Using requests)
+import requests
+import hmac
+import hashlib
+import json
+import os
+
+# Base URLs
+AUTH_URL = "https://ebills.africa/wp-json/jwt-auth/v1/token"
+API_URL = "https://ebills.africa/wp-json/api/v2/"
+
+# Credentials (store securely in production)
+USERNAME = os.getenv("EBILLS_USERNAME", "your_ebills_username")
+PASSWORD = os.getenv("EBILLS_PASSWORD", "your_ebills_password")
+USER_PIN = os.getenv("EBILLS_USER_PIN", "your_user_pin")  # For webhook verification
+
+# Global token
+TOKEN = None
+
+def get_access_token():
+    """Obtain a JWT token for authentication."""
+    global TOKEN
+    payload = {"username": USERNAME, "password": PASSWORD}
+    headers = {"Content-Type": "application/json"}
+    
+    try:
+        response = requests.post(AUTH_URL, json=payload, headers=headers)
+        response.raise_for_status()
+        data = response.json()
+        if "token" in data:
+            TOKEN = data["token"]
+            return TOKEN
+        else:
+            raise Exception(data.get("message", "Authentication failed"))
+    except requests.exceptions.HTTPError as http_err:
+        status = response.status_code
+        if status == 401:
+            raise Exception("Invalid credentials")
+        elif status == 403:
+            raise Exception("IP not whitelisted")
+        elif status == 400:
+            raise Exception("Invalid request")
+        raise Exception(f"HTTP error: {http_err}")
+    except requests.exceptions.RequestException as err:
+        raise Exception(f"Request error: {err}")
+
+def get_headers():
+    """Return headers with Bearer token."""
+    if not TOKEN:
+        get_access_token()
+    return {
+        "Authorization": f"Bearer {TOKEN}",
+        "Content-Type": "application/json"
+    }
+
+def check_balance():
+    """Check wallet balance."""
+    try:
+        response = requests.get(f"{API_URL}balance", headers=get_headers())
+        response.raise_for_status()
+        return response.json()
+    except requests.exceptions.HTTPError as err:
+        raise Exception(f"Error checking balance: {err}")
+
+def purchase_airtime():
+    """Purchase airtime."""
+    payload = {
+        "request_id": "req_20250412123456_airtime",
+        "phone": "08012345678",
+        "service_id": "mtn",
+        "amount": 100
+    }
+    try:
+        response = requests.post(f"{API_URL}airtime", json=payload, headers=get_headers())
+        response.raise_for_status()
+        return response.json()
+    except requests.exceptions.HTTPError as err:
+        raise Exception(f"Error purchasing airtime: {err}")
+
+def get_data_variations(service_id=None):
+    """Get data plan variations."""
+    url = f"{API_URL}variations/data"
+    if service_id:
+        url += f"?service_id={service_id}"
+    try:
+        response = requests.get(url)  # Public endpoint, no auth
+        response.raise_for_status()
+        return response.json()
+    except requests.exceptions.HTTPError as err:
+        raise Exception(f"Error getting data variations: {err}")
+
+def purchase_data():
+    """Purchase a data plan."""
+    payload = {
+        "request_id": "req_20250412123456_data",
+        "phone": "08012345678",
+        "service_id": "mtn",
+        "variation_id": "2682"
+    }
+    try:
+        response = requests.post(f"{API_URL}data", json=payload, headers=get_headers())
+        response.raise_for_status()
+        return response.json()
+    except requests.exceptions.HTTPError as err:
+        raise Exception(f"Error purchasing data: {err}")
+
+def verify_customer(service_id, customer_id, variation_id=None):
+    """Verify customer details."""
+    payload = {"customer_id": customer_id, "service_id": service_id}
+    if variation_id:
+        payload["variation_id"] = variation_id
+    try:
+        response = requests.post(f"{API_URL}verify-customer", json=payload, headers=get_headers())
+        response.raise_for_status()
+        return response.json()
+    except requests.exceptions.HTTPError as err:
+        raise Exception(f"Error verifying customer: {err}")
+
+def purchase_electricity():
+    """Purchase electricity units."""
+    payload = {
+        "request_id": "req_20250412123456_electricity",
+        "customer_id": "12345678901",
+        "service_id": "ikeja-electric",
+        "variation_id": "prepaid",
+        "amount": 1000
+    }
+    try:
+        response = requests.post(f"{API_URL}electricity", json=payload, headers=get_headers())
+        response.raise_for_status()
+        return response.json()
+    except requests.exceptions.HTTPError as err:
+        raise Exception(f"Error purchasing electricity: {err}")
+
+def fund_betting_account():
+    """Fund a betting account."""
+    payload = {
+        "request_id": "req_20250412123456_betting",
+        "customer_id": "USER12345",
+        "service_id": "Bet9ja",
+        "amount": 500
+    }
+    try:
+        response = requests.post(f"{API_URL}betting", json=payload, headers=get_headers())
+        response.raise_for_status()
+        return response.json()
+    except requests.exceptions.HTTPError as err:
+        raise Exception(f"Error funding betting account: {err}")
+
+def get_tv_variations(service_id=None):
+    """Get TV package variations."""
+    url = f"{API_URL}variations/tv"
+    if service_id:
+        url += f"?service_id={service_id}"
+    try:
+        response = requests.get(url)  # Public endpoint, no auth
+        response.raise_for_status()
+        return response.json()
+    except requests.exceptions.HTTPError as err:
+        raise Exception(f"Error getting TV variations: {err}")
+
+def purchase_tv_subscription():
+    """Purchase a cable TV subscription."""
+    payload = {
+        "request_id": "req_20250412123456_tv",
+        "customer_id": "1234567890",
+        "service_id": "dstv",
+        "variation_id": "3713"
+    }
+    try:
+        response = requests.post(f"{API_URL}tv", json=payload, headers=get_headers())
+        response.raise_for_status()
+        return response.json()
+    except requests.exceptions.HTTPError as err:
+        raise Exception(f"Error purchasing TV subscription: {err}")
+
+def purchase_epins():
+    """Purchase ePINs."""
+    payload = {
+        "request_id": "req_20250412123456_epins",
+        "service_id": "mtn",
+        "value": 500,
+        "quantity": 1
+    }
+    try:
+        response = requests.post(f"{API_URL}epins", json=payload, headers=get_headers())
+        response.raise_for_status()
+        return response.json()
+    except requests.exceptions.HTTPError as err:
+        raise Exception(f"Error purchasing ePINs: {err}")
+
+def requery_order(request_id):
+    """Requery an order status."""
+    payload = {"request_id": request_id}
+    try:
+        response = requests.post(f"{API_URL}requery", json=payload, headers=get_headers())
+        response.raise_for_status()
+        return response.json()
+    except requests.exceptions.HTTPError as err:
+        raise Exception(f"Error requerying order: {err}")
+
+def verify_webhook(payload, signature):
+    """Verify webhook signature (HMAC-SHA256)."""
+    computed_signature = hmac.new(
+        USER_PIN.encode('utf-8'),
+        payload.encode('utf-8'),
+        hashlib.sha256
+    ).hexdigest()
+    return hmac.compare_digest(computed_signature, signature)
+
+# Example Webhook Handler (using Flask)
+from flask import Flask, request
+app = Flask(__name__)
+
+@app.route('/webhook', methods=['POST'])
+def webhook():
+    payload = request.get_data(as_text=True)
+    signature = request.headers.get('X-Signature', '')
+    if verify_webhook(payload, signature):
+        data = request.get_json()
+        # Process webhook (e.g., update order status)
+        print("Webhook verified:", data)
+        return {"status": "success"}, 200
+    else:
+        print("Invalid signature")
+        return {"status": "error", "message": "Invalid signature"}, 403
+
+# Example Usage
+if __name__ == "__main__":
+    try:
+        print("Token:", get_access_token())
+        print("Balance:", check_balance())
+        print("Airtime:", purchase_airtime())
+        print("Data Variations:", get_data_variations("mtn"))
+        print("Data Purchase:", purchase_data())
+        print("Verify Customer:", verify_customer("ikeja-electric", "12345678901", "prepaid"))
+        print("Electricity:", purchase_electricity())
+        print("Betting:", fund_betting_account())
+        print("TV Variations:", get_tv_variations("dstv"))
+        print("TV Subscription:", purchase_tv_subscription())
+        print("ePINs:", purchase_epins())
+        print("Requery:", requery_order("req_20250412123456_data"))
+    except Exception as e:
+        print(f"Error: {e}")
+
+    # Run Flask app for webhook testing
+    # app.run(port=5000)
+Expand
+PHP (Using cURL)
+<?php
+
+// Base URLs
+define('AUTH_URL', 'https://ebills.africa/wp-json/jwt-auth/v1/token');
+define('API_URL', 'https://ebills.africa/wp-json/api/v2/');
+
+// Credentials (store securely in production)
+$username = getenv('EBILLS_USERNAME') ?: 'your_ebills_username';
+$password = getenv('EBILLS_PASSWORD') ?: 'your_ebills_password';
+$user_pin = getenv('EBILLS_USER_PIN') ?: 'your_user_pin';
+$token = null;
+
+function get_access_token() {
+    global $username, $password, $token;
+    $payload = json_encode(['username' => $username, 'password' => $password]);
+    $ch = curl_init(AUTH_URL);
+    curl_setopt($ch, CURLOPT_POST, true);
+    curl_setopt($ch, CURLOPT_POSTFIELDS, $payload);
+    curl_setopt($ch, CURLOPT_HTTPHEADER, ['Content-Type: application/json']);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    $response = curl_exec($ch);
+    $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    if ($response === false) {
+        throw new Exception('cURL Error: ' . curl_error($ch));
+    }
+    $data = json_decode($response, true);
+    curl_close($ch);
+    if ($http_code === 200 && isset($data['token'])) {
+        $token = $data['token'];
+        return $token;
+    }
+    $message = $data['message'] ?? 'Unknown error';
+    if ($http_code === 400) {
+        throw new Exception("Invalid request: $message");
+    } elseif ($http_code === 401) {
+        throw new Exception("Invalid credentials: $message");
+    } elseif ($http_code === 403) {
+        throw new Exception("IP not whitelisted: $message");
+    }
+    throw new Exception("Error ($http_code): $message");
+}
+
+function get_headers() {
+    global $token;
+    if (!$token) {
+        get_access_token();
+    }
+    return [
+        "Authorization: Bearer $token",
+        "Content-Type: application/json"
+    ];
+}
+
+function check_balance() {
+    $ch = curl_init(API_URL . 'balance');
+    curl_setopt($ch, CURLOPT_HTTPHEADER, get_headers());
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    $response = curl_exec($ch);
+    if ($response === false) {
+        throw new Exception('cURL Error: ' . curl_error($ch));
+    }
+    curl_close($ch);
+    return json_decode($response, true);
+}
+
+function purchase_airtime() {
+    $payload = json_encode([
+        'request_id' => 'req_20250412123456_airtime',
+        'phone' => '08012345678',
+        'service_id' => 'mtn',
+        'amount' => 100
+    ]);
+    $ch = curl_init(API_URL . 'airtime');
+    curl_setopt($ch, CURLOPT_POST, true);
+    curl_setopt($ch, CURLOPT_POSTFIELDS, $payload);
+    curl_setopt($ch, CURLOPT_HTTPHEADER, get_headers());
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    $response = curl_exec($ch);
+    if ($response === false) {
+        throw new Exception('cURL Error: ' . curl_error($ch));
+    }
+    curl_close($ch);
+    return json_decode($response, true);
+}
+
+function get_data_variations($service_id = null) {
+    $url = API_URL . 'variations/data';
+    if ($service_id) {
+        $url .= '?service_id=' . urlencode($service_id);
+    }
+    $ch = curl_init($url);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    $response = curl_exec($ch);
+    if ($response === false) {
+        throw new Exception('cURL Error: ' . curl_error($ch));
+    }
+    curl_close($ch);
+    return json_decode($response, true);
+}
+
+function purchase_data() {
+    $payload = json_encode([
+        'request_id' => 'req_20250412123456_data',
+        'phone' => '08012345678',
+        'service_id' => 'mtn',
+        'variation_id' => '2682'
+    ]);
+    $ch = curl_init(API_URL . 'data');
+    curl_setopt($ch, CURLOPT_POST, true);
+    curl_setopt($ch, CURLOPT_POSTFIELDS, $payload);
+    curl_setopt($ch, CURLOPT_HTTPHEADER, get_headers());
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    $response = curl_exec($ch);
+    if ($response === false) {
+        throw new Exception('cURL Error: ' . curl_error($ch));
+    }
+    curl_close($ch);
+    return json_decode($response, true);
+}
+
+function verify_customer($service_id, $customer_id, $variation_id = null) {
+    $payload = ['customer_id' => $customer_id, 'service_id' => $service_id];
+    if ($variation_id) {
+        $payload['variation_id'] = $variation_id;
+    }
+    $payload = json_encode($payload);
+    $ch = curl_init(API_URL . 'verify-customer');
+    curl_setopt($ch, CURLOPT_POST, true);
+    curl_setopt($ch, CURLOPT_POSTFIELDS, $payload);
+    curl_setopt($ch, CURLOPT_HTTPHEADER, get_headers());
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    $response = curl_exec($ch);
+    if ($response === false) {
+        throw new Exception('cURL Error: ' . curl_error($ch));
+    }
+    curl_close($ch);
+    return json_decode($response, true);
+}
+
+function purchase_electricity() {
+    $payload = json_encode([
+        'request_id' => 'req_20250412123456_electricity',
+        'customer_id' => '12345678901',
+        'service_id' => 'ikeja-electric',
+        'variation_id' => 'prepaid',
+        'amount' => 1000
+    ]);
+    $ch = curl_init(API_URL . 'electricity');
+    curl_setopt($ch, CURLOPT_POST, true);
+    curl_setopt($ch, CURLOPT_POSTFIELDS, $payload);
+    curl_setopt($ch, CURLOPT_HTTPHEADER, get_headers());
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    $response = curl_exec($ch);
+    if ($response === false) {
+        throw new Exception('cURL Error: ' . curl_error($ch));
+    }
+    curl_close($ch);
+    return json_decode($response, true);
+}
+
+function fund_betting_account() {
+    $payload = json_encode([
+        'request_id' => 'req_20250412123456_betting',
+        'customer_id' => 'USER12345',
+        'service_id' => 'Bet9ja',
+        'amount' => 500
+    ]);
+    $ch = curl_init(API_URL . 'betting');
+    curl_setopt($ch, CURLOPT_POST, true);
+    curl_setopt($ch, CURLOPT_POSTFIELDS, $payload);
+    curl_setopt($ch, CURLOPT_HTTPHEADER, get_headers());
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    $response = curl_exec($ch);
+    if ($response === false) {
+        throw new Exception('cURL Error: ' . curl_error($ch));
+    }
+    curl_close($ch);
+    return json_decode($response, true);
+}
+
+function get_tv_variations($service_id = null) {
+    $url = API_URL . 'variations/tv';
+    if ($service_id) {
+        $url .= '?service_id=' . urlencode($service_id);
+    }
+    $ch = curl_init($url);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    $response = curl_exec($ch);
+    if ($response === false) {
+        throw new Exception('cURL Error: ' . curl_error($ch));
+    }
+    curl_close($ch);
+    return json_decode($response, true);
+}
+
+function purchase_tv_subscription() {
+    $payload = json_encode([
+        'request_id' => 'req_20250412123456_tv',
+        'customer_id' => '1234567890',
+        'service_id' => 'dstv',
+        'variation_id' => '3713'
+    ]);
+    $ch = curl_init(API_URL . 'tv');
+    curl_setopt($ch, CURLOPT_POST, true);
+    curl_setopt($ch, CURLOPT_POSTFIELDS, $payload);
+    curl_setopt($ch, CURLOPT_HTTPHEADER, get_headers());
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    $response = curl_exec($ch);
+    if ($response === false) {
+        throw new Exception('cURL Error: ' . curl_error($ch));
+    }
+    curl_close($ch);
+    return json_decode($response, true);
+}
+
+function purchase_epins() {
+    $payload = json_encode([
+        'request_id' => 'req_20250412123456_epins',
+        'service_id' => 'mtn',
+        'value' => 500,
+        'quantity' => 1
+    ]);
+    $ch = curl_init(API_URL . 'epins');
+    curl_setopt($ch, CURLOPT_POST, true);
+    curl_setopt($ch, CURLOPT_POSTFIELDS, $payload);
+    curl_setopt($ch, CURLOPT_HTTPHEADER, get_headers());
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    $response = curl_exec($ch);
+    if ($response === false) {
+        throw new Exception('cURL Error: ' . curl_error($ch));
+    }
+    curl_close($ch);
+    return json_decode($response, true);
+}
+
+function requery_order($request_id) {
+    $payload = json_encode(['request_id' => $request_id]);
+    $ch = curl_init(API_URL . 'requery');
+    curl_setopt($ch, CURLOPT_POST, true);
+    curl_setopt($ch, CURLOPT_POSTFIELDS, $payload);
+    curl_setopt($ch, CURLOPT_HTTPHEADER, get_headers());
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    $response = curl_exec($ch);
+    if ($response === false) {
+        throw new Exception('cURL Error: ' . curl_error($ch));
+    }
+    curl_close($ch);
+    return json_decode($response, true);
+}
+
+// Webhook Verification Handler
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_SERVER['HTTP_X_SIGNATURE'])) {
+    try {
+        $payload = file_get_contents('php://input');
+        $received_signature = $_SERVER['HTTP_X_SIGNATURE'] ?? '';
+        $computed_signature = hash_hmac('sha256', $payload, $user_pin);
+        
+        if (hash_equals($computed_signature, $received_signature)) {
+            http_response_code(200);
+            $data = json_decode($payload, true);
+            // Process webhook (e.g., update order status)
+            file_put_contents('webhook_log.txt', print_r($data, true), FILE_APPEND);
+            if (isset($data['order_id']) && isset($data['status'])) {
+                $order_id = $data['order_id'];
+                $status = $data['status'];
+                error_log("Order $order_id: $status");
+            }
+            echo json_encode(['status' => 'success', 'message' => 'Webhook processed']);
+        } else {
+            http_response_code(403);
+            echo json_encode(['status' => 'error', 'message' => 'Invalid signature']);
+        }
+    } catch (Exception $e) {
+        http_response_code(500);
+        echo json_encode(['status' => 'error', 'message' => $e->getMessage()]);
+    }
+    exit;
+}
+
+// Example Usage
+try {
+    echo "Token: " . get_access_token() . "\n";
+    echo "Balance: " . print_r(check_balance(), true) . "\n";
+    echo "Airtime: " . print_r(purchase_airtime(), true) . "\n";
+    echo "Data Variations: " . print_r(get_data_variations('mtn'), true) . "\n";
+    echo "Data Purchase: " . print_r(purchase_data(), true) . "\n";
+    echo "Verify Customer: " . print_r(verify_customer('ikeja-electric', '12345678901', 'prepaid'), true) . "\n";
+    echo "Electricity: " . print_r(purchase_electricity(), true) . "\n";
+    echo "Betting: " . print_r(fund_betting_account(), true) . "\n";
+    echo "TV Variations: " . print_r(get_tv_variations('dstv'), true) . "\n";
+    echo "TV Subscription: " . print_r(purchase_tv_subscription(), true) . "\n";
+    echo "ePINs: " . print_r(purchase_epins(), true) . "\n";
+    echo "Requery: " . print_r(requery_order('req_20250412123456_data'), true) . "\n";
+} catch (Exception $e) {
+    echo "Error: " . $e->getMessage() . "\n";
+}
+
+?>
+Expand
+JavaScript (Using fetch)
+// Base URLs
+const AUTH_URL = "https://ebills.africa/wp-json/jwt-auth/v1/token";
+const API_URL = "https://ebills.africa/wp-json/api/v2/";
+
+// Credentials (store securely in production)
+const USERNAME = process.env.EBILLS_USERNAME || "your_ebills_username";
+const PASSWORD = process.env.EBILLS_PASSWORD || "your_ebills_password";
+const USER_PIN = process.env.EBILLS_USER_PIN || "your_user_pin"; // For webhook verification
+
+let token = null;
+
+async function getAccessToken() {
+    const payload = { username: USERNAME, password: PASSWORD };
+    const response = await fetch(AUTH_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+    });
+    if (!response.ok) {
+        if (response.status === 400) throw new Error("Invalid request");
+        if (response.status === 401) throw new Error("Invalid credentials");
+        if (response.status === 403) throw new Error("IP not whitelisted");
+        throw new Error(`HTTP error: ${response.status}`);
+    }
+    const data = await response.json();
+    if (data.token) {
+        token = data.token;
+        return token;
+    }
+    throw new Error(data.message || "Authentication failed");
+}
+
+function getHeaders() {
+    if (!token) throw new Error("Token not initialized. Call getAccessToken first.");
+    return {
+        "Authorization": `Bearer ${token}`,
+        "Content-Type": "application/json"
+    };
+}
+
+async function checkBalance() {
+    const response = await fetch(`${API_URL}balance`, {
+        method: "GET",
+        headers: getHeaders()
+    });
+    if (!response.ok) throw new Error(`Error checking balance: ${response.status}`);
+    return response.json();
+}
+
+async function purchaseAirtime() {
+    const payload = {
+        request_id: "req_20250412123456_airtime",
+        phone: "08012345678",
+        service_id: "mtn",
+        amount: 100
+    };
+    const response = await fetch(`${API_URL}airtime`, {
+        method: "POST",
+        headers: getHeaders(),
+        body: JSON.stringify(payload)
+    });
+    if (!response.ok) throw new Error(`Error purchasing airtime: ${response.status}`);
+    return response.json();
+}
+
+async function getDataVariations(serviceId = null) {
+    let url = `${API_URL}variations/data`;
+    if (serviceId) url += `?service_id=${serviceId}`;
+    const response = await fetch(url);
+    if (!response.ok) throw new Error(`Error getting data variations: ${response.status}`);
+    return response.json();
+}
+
+async function purchaseData() {
+    const payload = {
+        request_id: "req_20250412123456_data",
+        phone: "08012345678",
+        service_id: "mtn",
+        variation_id: "2682"
+    };
+    const response = await fetch(`${API_URL}data`, {
+        method: "POST",
+        headers: getHeaders(),
+        body: JSON.stringify(payload)
+    });
+    if (!response.ok) throw new Error(`Error purchasing data: ${response.status}`);
+    return response.json();
+}
+
+async function verifyCustomer(serviceId, customerId, variationId = null) {
+    const payload = { customer_id: customerId, service_id: serviceId };
+    if (variationId) payload.variation_id = variationId;
+    const response = await fetch(`${API_URL}verify-customer`, {
+        method: "POST",
+        headers: getHeaders(),
+        body: JSON.stringify(payload)
+    });
+    if (!response.ok) throw new Error(`Error verifying customer: ${response.status}`);
+    return response.json();
+}
+
+async function purchaseElectricity() {
+    const payload = {
+        request_id: "req_20250412123456_electricity",
+        customer_id: "12345678901",
+        service_id: "ikeja-electric",
+        variation_id: "prepaid",
+        amount: 1000
+    };
+    const response = await fetch(`${API_URL}electricity`, {
+        method: "POST",
+        headers: getHeaders(),
+        body: JSON.stringify(payload)
+    });
+    if (!response.ok) throw new Error(`Error purchasing electricity: ${response.status}`);
+    return response.json();
+}
+
+async function fundBettingAccount() {
+    const payload = {
+        request_id: "req_20250412123456_betting",
+        customer_id: "USER12345",
+        service_id: "Bet9ja",
+        amount: 500
+    };
+    const response = await fetch(`${API_URL}betting`, {
+        method: "POST",
+        headers: getHeaders(),
+        body: JSON.stringify(payload)
+    });
+    if (!response.ok) throw new Error(`Error funding betting account: ${response.status}`);
+    return response.json();
+}
+
+async function getTvVariations(serviceId = null) {
+    let url = `${API_URL}variations/tv`;
+    if (serviceId) url += `?service_id=${serviceId}`;
+    const response = await fetch(url);
+    if (!response.ok) throw new Error(`Error getting TV variations: ${response.status}`);
+    return response.json();
+}
+
+async function purchaseTvSubscription() {
+    const payload = {
+        request_id: "req_20250412123456_tv",
+        customer_id: "1234567890",
+        service_id: "dstv",
+        variation_id: "3713"
+    };
+    const response = await fetch(`${API_URL}tv`, {
+        method: "POST",
+        headers: getHeaders(),
+        body: JSON.stringify(payload)
+    });
+    if (!response.ok) throw new Error(`Error purchasing TV subscription: ${response.status}`);
+    return response.json();
+}
+
+async function purchaseEpins() {
+    const payload = {
+        request_id: "req_20250412123456_epins",
+        service_id: "mtn",
+        value: 500,
+        quantity: 1
+    };
+    const response = await fetch(`${API_URL}epins`, {
+        method: "POST",
+        headers: getHeaders(),
+        body: JSON.stringify(payload)
+    });
+    if (!response.ok) throw new Error(`Error purchasing ePINs: ${response.status}`);
+    return response.json();
+}
+
+async function requeryOrder(requestId) {
+    const payload = { request_id: requestId };
+    const response = await fetch(`${API_URL}requery`, {
+        method: "POST",
+        headers: getHeaders(),
+        body: JSON.stringify(payload)
+    });
+    if (!response.ok) throw new Error(`Error requerying order: ${response.status}`);
+    return response.json();
+}
+
+// Webhook Verification (Node.js with Express)
+const express = require('express');
+const crypto = require('crypto');
+const app = express();
+app.use(express.json({ verify: (req, res, buf) => { req.rawBody = buf; } }));
+
+app.post('/webhook', (req, res) => {
+    const signature = req.headers['x-signature'] || '';
+    const payload = req.rawBody.toString();
+    const computedSignature = crypto
+        .createHmac('sha256', USER_PIN)
+        .update(payload)
+        .digest('hex');
+    
+    if (crypto.timingSafeEqual(Buffer.from(computedSignature), Buffer.from(signature))) {
+        console.log("Webhook verified:", req.body);
+        // Process webhook (e.g., update order status)
+        res.status(200).json({ status: "success" });
+    } else {
+        console.error("Invalid signature");
+        res.status(403).json({ status: "error", message: "Invalid signature" });
+    }
+});
+
+// Example Usage
+(async () => {
+    try {
+        console.log("Token:", await getAccessToken());
+        console.log("Balance:", await checkBalance());
+        console.log("Airtime:", await purchaseAirtime());
+        console.log("Data Variations:", await getDataVariations("mtn"));
+        console.log("Data Purchase:", await purchaseData());
+        console.log("Verify Customer:", await verifyCustomer("ikeja-electric", "12345678901", "prepaid"));
+        console.log("Electricity:", await purchaseElectricity());
+        console.log("Betting:", await fundBettingAccount());
+        console.log("TV Variations:", await getTvVariations("dstv"));
+        console.log("TV Subscription:", await purchaseTvSubscription());
+        console.log("ePINs:", await purchaseEpins());
+        console.log("Requery:", await requeryOrder("req_20250412123456_data"));
+    } catch (error) {
+        console.error("Error:", error.message);
+    }
+})();
+
+// Start server for webhook testing
+// app.listen(3000, () => console.log("Webhook server running on port 3000"));
+Expand
+Additional Notes
+Transaction Status:
+Orders transition through: initiated-api, processing-api, completed-api, refunded, etc.
+Use /api/v2/requery or webhooks for status updates.
+Webhooks:
+Configure the URL in the eBills developer settings dashboard for completed-api and refunded notifications.
+Verify signatures and handle duplicates.
+Variations:
+Use /api/v2/variations/data and /api/v2/variations/tv to fetch valid variation_id values.
+Public access simplifies pre-purchase validation.
+Customer Verification:
+Mandatory before electricity, betting, or TV purchases to ensure valid customer IDs.
+Rate Limits:
+3-minute lockout for duplicate orders.
+Support:
+Contact support@ebills.africa or use the support desk.
+Testing:
+Test small transactions and webhooks before production.
+Changelog
+Version 2.1 (April 12, 2025):
+Updated /variations/data, /variations/tv, /requery, and webhook notifications.
+Version 2.0 (April 10, 2025):
+Added /variations/data, /variations/tv, /requery, and webhook notifications.
+Syncronised processing of frontend orders and API orders.
+Changed the authentication system.
+Other maintenance fixes.
+Version 1.0 (May 23, 2022):
+Initial release with core transactional endpoints.
