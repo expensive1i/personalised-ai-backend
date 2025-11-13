@@ -261,4 +261,6 @@ async function handleAccountSelection(message, pendingTransaction) {
 }
 
 module.exports = router;
+module.exports.processInternalTransferRequest = processInternalTransferRequest;
+module.exports.handleAccountSelection = handleAccountSelection;
 

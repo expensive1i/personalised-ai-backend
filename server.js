@@ -49,6 +49,8 @@ const server = app.listen(PORT, () => {
   console.log(`  POST   /api/transfer`);
   console.log(`  POST   /api/buy-airtime`);
   console.log(`  POST   /api/load-money`);
+  console.log(`  POST   /api/manual-transfer`);
+  console.log(`  POST   /api/message`);
   console.log(`  POST   /api/verify-transaction`);
   console.log(`  POST   /api/query-ai`);
   console.log(`  POST   /api/account-verification`);

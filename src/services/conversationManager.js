@@ -1,7 +1,8 @@
-const { extractIntentWithGemini, processWithClaude, parseNaturalDate } = require('./llm');
+const { extractIntentWithGemini, processWithClaude, parseNaturalDate, parseRelativeTime } = require('./llm');
 const {
   getLastTransaction,
   getTransactionsByDateRange,
+  getTransactionsByTimeRange,
   getBillPaymentsByDateRange,
   searchBeneficiaries,
   getAccountBalance,
@@ -157,12 +158,14 @@ class ConversationManager {
     const tools = [
       {
         name: 'search_transactions',
-        description: 'Search user transactions with date range and type filters. Use this for questions about transfers, bank transactions, etc. DO NOT use for airtime, data, cable, internet, or electricity - use search_bill_payments instead.',
+        description: 'Search user transactions with date range, time range, and type filters. Use this for questions about transfers, bank transactions, spending, etc. Supports date ranges (YYYY-MM-DD), relative time (e.g., "last 2 hours", "last 30 minutes", "last week"), or both. DO NOT use for airtime, data, cable, internet, or electricity - use search_bill_payments instead.',
         input_schema: {
           type: 'object',
           properties: {
-            startDate: { type: 'string', description: 'Start date (YYYY-MM-DD). Can be null for "last transaction" queries' },
-            endDate: { type: 'string', description: 'End date (YYYY-MM-DD). Can be null for single date queries' },
+            startDate: { type: 'string', description: 'Start date (YYYY-MM-DD) or relative time (e.g., "last 2 hours", "last 30 minutes", "last week"). Can be null for "last transaction" queries' },
+            endDate: { type: 'string', description: 'End date (YYYY-MM-DD) or "now" for current time. Can be null for single date queries or relative time queries' },
+            startTime: { type: 'string', description: 'Start time in ISO format (YYYY-MM-DDTHH:mm:ssZ). Use this for precise time-based queries. Overrides startDate if provided.' },
+            endTime: { type: 'string', description: 'End time in ISO format (YYYY-MM-DDTHH:mm:ssZ). Use this for precise time-based queries. Overrides endDate if provided.' },
             transactionType: { type: 'string', description: 'Type: transfer, debit, credit, all' },
             limit: { type: 'number', description: 'Maximum number of transactions to return (default: 100)' },
           },
@@ -283,9 +286,65 @@ class ConversationManager {
     try {
       switch (toolName) {
         case 'search_transactions':
-          // Handle queries without date range (e.g., "all my transactions")
+          // Handle time-based queries (e.g., "last 2 hours", "last 30 minutes")
+          let startTime = parameters.startTime;
+          let endTime = parameters.endTime;
           let startDate = parameters.startDate;
           let endDate = parameters.endDate;
+          
+          // If precise times are provided, use them directly
+          if (startTime && endTime) {
+            const transactions = await getTransactionsByTimeRange(
+              this.customerId,
+              new Date(startTime),
+              new Date(endTime),
+              parameters.transactionType || 'all'
+            );
+            
+            const limit = parameters.limit || 100;
+            const limitedTransactions = transactions.slice(0, limit);
+            
+            return { 
+              transactions: limitedTransactions, 
+              count: limitedTransactions.length,
+              total: transactions.length,
+              timeRange: { startTime, endTime }
+            };
+          }
+          
+          // Check for relative time expressions (e.g., "last 2 hours")
+          if (startDate && !startDate.match(/^\d{4}-\d{2}-\d{2}/)) {
+            const relativeTime = parseRelativeTime(startDate);
+            if (relativeTime) {
+              const transactions = await getTransactionsByTimeRange(
+                this.customerId,
+                relativeTime.startTime,
+                relativeTime.endTime,
+                parameters.transactionType || 'all'
+              );
+              
+              const limit = parameters.limit || 100;
+              const limitedTransactions = transactions.slice(0, limit);
+              
+              return { 
+                transactions: limitedTransactions, 
+                count: limitedTransactions.length,
+                total: transactions.length,
+                timeRange: { 
+                  startTime: relativeTime.startTime.toISOString(),
+                  endTime: relativeTime.endTime.toISOString()
+                }
+              };
+            }
+          }
+          
+          // Handle date-based queries
+          // If only one date is provided (e.g., "today"), use it for both start and end
+          if (startDate && !endDate) {
+            endDate = startDate;
+          } else if (endDate && !startDate) {
+            startDate = endDate;
+          }
           
           // If no dates provided, get all transactions (or last 30 days)
           if (!startDate || !endDate) {
@@ -293,6 +352,16 @@ class ConversationManager {
             thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
             startDate = startDate || thirtyDaysAgo.toISOString().split('T')[0];
             endDate = endDate || new Date().toISOString().split('T')[0];
+          }
+          
+          // Parse natural language dates (e.g., "today", "yesterday")
+          if (startDate && !startDate.match(/^\d{4}-\d{2}-\d{2}$/)) {
+            const parsedStart = parseNaturalDate(startDate, false);
+            if (parsedStart) startDate = parsedStart;
+          }
+          if (endDate && !endDate.match(/^\d{4}-\d{2}-\d{2}$/)) {
+            const parsedEnd = parseNaturalDate(endDate, true);
+            if (parsedEnd) endDate = parsedEnd;
           }
           
           const transactions = await getTransactionsByDateRange(
@@ -318,12 +387,29 @@ class ConversationManager {
           let billStartDate = parameters.startDate;
           let billEndDate = parameters.endDate;
           
+          // If only one date is provided (e.g., "today"), use it for both start and end
+          if (billStartDate && !billEndDate) {
+            billEndDate = billStartDate;
+          } else if (billEndDate && !billStartDate) {
+            billStartDate = billEndDate;
+          }
+          
           // If no dates provided, get all bill payments (or last 30 days)
           if (!billStartDate || !billEndDate) {
             const thirtyDaysAgo = new Date();
             thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
             billStartDate = billStartDate || thirtyDaysAgo.toISOString().split('T')[0];
             billEndDate = billEndDate || new Date().toISOString().split('T')[0];
+          }
+          
+          // Parse natural language dates (e.g., "today", "yesterday")
+          if (billStartDate && !billStartDate.match(/^\d{4}-\d{2}-\d{2}$/)) {
+            const parsedStart = parseNaturalDate(billStartDate, false);
+            if (parsedStart) billStartDate = parsedStart;
+          }
+          if (billEndDate && !billEndDate.match(/^\d{4}-\d{2}-\d{2}$/)) {
+            const parsedEnd = parseNaturalDate(billEndDate, true);
+            if (parsedEnd) billEndDate = parsedEnd;
           }
           
           const billPayments = await getBillPaymentsByDateRange(
@@ -424,6 +510,54 @@ class ConversationManager {
   async handleQueryTransactions(parameters) {
     let { startDate, endDate, transactionType } = parameters;
 
+    // Check for relative time expressions (e.g., "last 2 hours", "last 30 minutes")
+    if (startDate && !startDate.match(/^\d{4}-\d{2}-\d{2}$/)) {
+      const relativeTime = parseRelativeTime(startDate);
+      if (relativeTime) {
+        // Handle time-based query
+        const transactions = await getTransactionsByTimeRange(
+          this.customerId,
+          relativeTime.startTime,
+          relativeTime.endTime,
+          transactionType || 'all'
+        );
+
+        if (transactions.length === 0) {
+          const typeText = transactionType && transactionType !== 'all' ? transactionType : '';
+          const response = `You don't have any ${typeText ? typeText + ' ' : ''}transactions in the last period.`;
+          this.conversationHistory.push({ role: 'assistant', content: response });
+          return { response, action: null };
+        }
+
+        // Calculate totals
+        const totalSpent = transactions
+          .filter(t => t.transactionType === 'debit')
+          .reduce((sum, t) => sum + (t.amount || 0), 0);
+        
+        const totalReceived = transactions
+          .filter(t => t.transactionType === 'credit')
+          .reduce((sum, t) => sum + (t.amount || 0), 0);
+
+        let response = `I found ${transactions.length} transaction(s) in the last period.`;
+        
+        if (totalSpent > 0 || totalReceived > 0) {
+          const parts = [];
+          if (totalSpent > 0) {
+            parts.push(`Total spent: ₦${totalSpent.toLocaleString()}`);
+          }
+          if (totalReceived > 0) {
+            parts.push(`Total received: ₦${totalReceived.toLocaleString()}`);
+          }
+          if (parts.length > 0) {
+            response += ` ${parts.join('. ')}.`;
+          }
+        }
+        
+        this.conversationHistory.push({ role: 'assistant', content: response });
+        return { response, action: null, data: { transactions, totalSpent, totalReceived } };
+      }
+    }
+
     // Parse natural language dates
     if (startDate && !startDate.match(/^\d{4}-\d{2}-\d{2}$/)) {
       startDate = parseNaturalDate(startDate, false);
@@ -446,14 +580,42 @@ class ConversationManager {
     );
 
     if (transactions.length === 0) {
-      const response = `You don't have any ${transactionType || ''} transactions between ${startDate} and ${endDate}.`;
+      const typeText = transactionType && transactionType !== 'all' ? transactionType : '';
+      const response = `You don't have any ${typeText ? typeText + ' ' : ''}transactions between ${startDate} and ${endDate}.`;
       this.conversationHistory.push({ role: 'assistant', content: response });
       return { response, action: null };
     }
 
-    const response = `I found ${transactions.length} transaction(s) between ${startDate} and ${endDate}.`;
+    // Calculate total spent (sum of debit transactions)
+    const totalSpent = transactions
+      .filter(t => t.transactionType === 'debit')
+      .reduce((sum, t) => sum + (t.amount || 0), 0);
+    
+    // Calculate total received (sum of credit transactions)
+    const totalReceived = transactions
+      .filter(t => t.transactionType === 'credit')
+      .reduce((sum, t) => sum + (t.amount || 0), 0);
+
+    // Format date range for display
+    const dateRangeText = startDate === endDate ? `on ${startDate}` : `between ${startDate} and ${endDate}`;
+    let response = `I found ${transactions.length} transaction(s) ${dateRangeText}.`;
+    
+    // Add spending summary if relevant
+    if (totalSpent > 0 || totalReceived > 0) {
+      const parts = [];
+      if (totalSpent > 0) {
+        parts.push(`Total spent: ₦${totalSpent.toLocaleString()}`);
+      }
+      if (totalReceived > 0) {
+        parts.push(`Total received: ₦${totalReceived.toLocaleString()}`);
+      }
+      if (parts.length > 0) {
+        response += ` ${parts.join('. ')}.`;
+      }
+    }
+    
     this.conversationHistory.push({ role: 'assistant', content: response });
-    return { response, action: null, data: { transactions } };
+    return { response, action: null, data: { transactions, totalSpent, totalReceived } };
   }
 
   /**

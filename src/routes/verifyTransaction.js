@@ -5,6 +5,7 @@ const { getCustomerPINHash, initiateTransfer, prisma } = require('../services/da
 const bcrypt = require('bcryptjs');
 const { getPendingTransaction, deletePendingTransaction } = require('../services/pendingTransactions');
 const { purchaseAirtime } = require('../services/ebills');
+const { verifyAccount } = require('../services/bankVerification');
 
 /**
  * @swagger
@@ -189,7 +190,25 @@ router.post('/', authenticateByPhone, async (req, res) => {
  * Execute transfer transaction
  */
 async function executeTransfer(pendingTransaction) {
-  const { customerId, accountId, beneficiary, amount } = pendingTransaction;
+  const { customerId, accountId, beneficiary, amount, receiverAccountNumber } = pendingTransaction;
+
+  // If this is a manual transfer and receiver account needs verification
+  if (receiverAccountNumber && (!beneficiary.name || !beneficiary.bankName)) {
+    try {
+      // Verify receiver account using Paystack
+      const receiverDetails = await verifyAccount(receiverAccountNumber);
+      
+      // Update beneficiary with verified details
+      beneficiary.name = receiverDetails.account_name;
+      beneficiary.accountNumber = receiverDetails.account_number;
+      beneficiary.bankName = receiverDetails.bank_name;
+      beneficiary.bankAccount = receiverDetails.account_number;
+      beneficiary.last4Digits = receiverDetails.account_number.slice(-4);
+    } catch (error) {
+      console.error('Receiver account verification error:', error);
+      throw new Error(`Could not verify receiver account number ${receiverAccountNumber}. Please check the account number and try again.`);
+    }
+  }
 
   // Prepare recipient data from beneficiary object
   const recipientData = {

@@ -78,16 +78,100 @@ async function getLastTransaction(customerId) {
 }
 
 /**
- * Get transactions within a date range, optionally filtered by type
+ * Get transactions within a time range (precise DateTime), optionally filtered by type
  */
-async function getTransactionsByDateRange(customerId, startDate, endDate, transactionType = null) {
+async function getTransactionsByTimeRange(customerId, startTime, endTime, transactionType = null) {
   try {
     const where = {
       customerId: parseInt(customerId),
       deletedAt: null,
       transactionDate: {
-        gte: new Date(startDate),
-        lte: new Date(endDate),
+        gte: startTime,
+        lte: endTime,
+      },
+    };
+
+    // Filter by transaction type if provided (e.g., "airtime", "transfer")
+    if (transactionType && transactionType !== 'all') {
+      // For airtime, check if receiverName or bankName contains "airtime" related keywords
+      if (transactionType.toLowerCase() === 'airtime') {
+        where.OR = [
+          { receiverName: { contains: 'airtime', mode: 'insensitive' } },
+          { bankName: { contains: 'airtime', mode: 'insensitive' } },
+          { transactionType: 'debit' }, // Airtime is usually a debit
+        ];
+      } else {
+        where.transactionType = transactionType.toLowerCase();
+      }
+    }
+
+    const transactions = await prisma.transaction.findMany({
+      where,
+      orderBy: {
+        transactionDate: 'desc',
+      },
+      include: {
+        account: {
+          select: {
+            id: true,
+            accountNumber: true,
+            bankName: true,
+          },
+        },
+      },
+    });
+
+    // Convert BigInt IDs and Decimal values to numbers for JSON serialization
+    return transactions.map(t => ({
+      ...t,
+      id: Number(t.id),
+      customerId: Number(t.customerId),
+      accountId: Number(t.accountId),
+      amount: t.amount?.toNumber ? t.amount.toNumber() : Number(t.amount),
+      balanceBefore: t.balanceBefore?.toNumber ? t.balanceBefore.toNumber() : Number(t.balanceBefore),
+      balanceAfter: t.balanceAfter?.toNumber ? t.balanceAfter.toNumber() : Number(t.balanceAfter),
+      account: t.account ? {
+        ...t.account,
+        id: Number(t.account.id),
+      } : null,
+    }));
+  } catch (error) {
+    console.error('Error getting transactions by time range:', error);
+    throw error;
+  }
+}
+
+/**
+ * Get transactions within a date range, optionally filtered by type
+ */
+async function getTransactionsByDateRange(customerId, startDate, endDate, transactionType = null) {
+  try {
+    // Parse dates and set to start/end of day to include all transactions for that day
+    // Use UTC to ensure consistency across timezones
+    // startDate should be at 00:00:00.000 UTC
+    let startDateObj;
+    if (typeof startDate === 'string' && startDate.match(/^\d{4}-\d{2}-\d{2}$/)) {
+      startDateObj = new Date(startDate + 'T00:00:00.000Z');
+    } else {
+      startDateObj = new Date(startDate);
+      startDateObj.setUTCHours(0, 0, 0, 0);
+    }
+    
+    // endDate should be at 23:59:59.999 UTC
+    let endDateObj;
+    if (typeof endDate === 'string' && endDate.match(/^\d{4}-\d{2}-\d{2}$/)) {
+      endDateObj = new Date(endDate + 'T23:59:59.999Z');
+    } else {
+      endDateObj = new Date(endDate);
+      endDateObj.setUTCHours(23, 59, 59, 999);
+    }
+    
+    const where = {
+      customerId: parseInt(customerId),
+      deletedAt: null,
+      transactionDate: {
+        gte: startDateObj,
+        lte: endDateObj,
       },
     };
 
@@ -635,12 +719,32 @@ async function getCustomerByPhone(phoneNumber) {
  */
 async function getBillPaymentsByDateRange(customerId, startDate, endDate, paymentType = null) {
   try {
+    // Parse dates and set to start/end of day to include all payments for that day
+    // Use UTC to ensure consistency across timezones
+    // startDate should be at 00:00:00.000 UTC
+    let startDateObj;
+    if (typeof startDate === 'string' && startDate.match(/^\d{4}-\d{2}-\d{2}$/)) {
+      startDateObj = new Date(startDate + 'T00:00:00.000Z');
+    } else {
+      startDateObj = new Date(startDate);
+      startDateObj.setUTCHours(0, 0, 0, 0);
+    }
+    
+    // endDate should be at 23:59:59.999 UTC
+    let endDateObj;
+    if (typeof endDate === 'string' && endDate.match(/^\d{4}-\d{2}-\d{2}$/)) {
+      endDateObj = new Date(endDate + 'T23:59:59.999Z');
+    } else {
+      endDateObj = new Date(endDate);
+      endDateObj.setUTCHours(23, 59, 59, 999);
+    }
+    
     const where = {
       customer_id: BigInt(customerId),
       deleted_at: null,
       payment_date: {
-        gte: new Date(startDate),
-        lte: new Date(endDate),
+        gte: startDateObj,
+        lte: endDateObj,
       },
     };
 
@@ -854,6 +958,7 @@ async function createCustomer(customerName, phoneNumber, accountNumber, pin, ban
 module.exports = {
   getLastTransaction,
   getTransactionsByDateRange,
+  getTransactionsByTimeRange,
   getBillPaymentsByDateRange,
   searchBeneficiaries,
   getAccountBalance,

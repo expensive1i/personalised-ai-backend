@@ -14,6 +14,8 @@ const buyAirtimeRoutes = require('./routes/buyAirtime');
 const loadMoneyRoutes = require('./routes/loadMoney');
 const usersRoutes = require('./routes/users');
 const validatePhoneRoutes = require('./routes/users').validatePhoneRouter;
+const manualTransferRoutes = require('./routes/manualTransfer');
+const messageRoutes = require('./routes/message');
 
 const app = express();
 
@@ -183,6 +185,8 @@ app.use('/api/buy-airtime', buyAirtimeRoutes);
 app.use('/api/load-money', loadMoneyRoutes);
 app.use('/api/users', usersRoutes);
 app.use('/api/validate-phone-number', validatePhoneRoutes);
+app.use('/api/manual-transfer', manualTransferRoutes);
+app.use('/api/message', messageRoutes);
 
 // Health check
 app.get('/health', (req, res) => {
@@ -242,6 +246,12 @@ app.get('/', (req, res) => {
       },
       loadMoney: {
         post: 'POST /api/load-money - Load money into customer account (requires phoneNumber, amount)',
+      },
+      manualTransfer: {
+        post: 'POST /api/manual-transfer - Manual transfer by account numbers (requires phoneNumber, sourceAccountNumber, receiverAccountNumber, amount)',
+      },
+      message: {
+        post: 'POST /api/message - Unified message endpoint for voice assistant (automatically routes to appropriate handler)',
       },
       chat: {
         post: 'POST /api/chat - Legacy chat endpoint',

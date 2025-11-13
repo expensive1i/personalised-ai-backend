@@ -37,7 +37,7 @@ ${JSON.stringify(conversationHistory.slice(-5), null, 2)}
 User Message: "${userMessage}"
 
 Analyze this message and extract:
-1. Intent (query_transaction, query_bill_payment, make_transfer, buy_airtime, check_balance, get_last_transaction, general_question, unclear)
+1. Intent (query_transaction, query_bill_payment, make_transfer, internal_transfer, buy_airtime, check_balance, get_last_transaction, general_question, unclear)
 2. Parameters (dates, amounts, names, transaction types, payment types)
 3. Confidence (0-1)
 4. Whether clarification is needed
@@ -145,6 +145,62 @@ IMPORTANT GUIDELINES:
 }
 
 /**
+ * Parse relative time expressions (e.g., "last 2 hours", "last 30 minutes")
+ * Returns an object with { startTime: Date, endTime: Date } or null
+ */
+function parseRelativeTime(timeString) {
+  if (!timeString) return null;
+
+  const now = new Date();
+  const timeStr = timeString.toLowerCase().trim();
+  
+  // Pattern: "last X hours/minutes/days/weeks/months"
+  const relativePattern = /last\s+(\d+)\s+(hour|hours|minute|minutes|day|days|week|weeks|month|months|year|years)/i;
+  const match = timeStr.match(relativePattern);
+  
+  if (match) {
+    const amount = parseInt(match[1]);
+    const unit = match[2].toLowerCase();
+    
+    const endTime = new Date(now);
+    let startTime = new Date(now);
+    
+    switch (unit) {
+      case 'minute':
+      case 'minutes':
+        startTime.setMinutes(startTime.getMinutes() - amount);
+        break;
+      case 'hour':
+      case 'hours':
+        startTime.setHours(startTime.getHours() - amount);
+        break;
+      case 'day':
+      case 'days':
+        startTime.setDate(startTime.getDate() - amount);
+        break;
+      case 'week':
+      case 'weeks':
+        startTime.setDate(startTime.getDate() - (amount * 7));
+        break;
+      case 'month':
+      case 'months':
+        startTime.setMonth(startTime.getMonth() - amount);
+        break;
+      case 'year':
+      case 'years':
+        startTime.setFullYear(startTime.getFullYear() - amount);
+        break;
+      default:
+        return null;
+    }
+    
+    return { startTime, endTime };
+  }
+  
+  return null;
+}
+
+/**
  * Format date from natural language
  */
 function parseNaturalDate(dateString, isEndDate = false) {
@@ -152,6 +208,31 @@ function parseNaturalDate(dateString, isEndDate = false) {
 
   const today = new Date();
   const dateStr = dateString.toLowerCase().trim();
+
+  // Handle relative dates
+  if (dateStr === 'today' || dateStr === 'now') {
+    return today.toISOString().split('T')[0];
+  }
+  
+  if (dateStr === 'yesterday') {
+    const yesterday = new Date(today);
+    yesterday.setDate(yesterday.getDate() - 1);
+    return yesterday.toISOString().split('T')[0];
+  }
+  
+  if (dateStr === 'tomorrow') {
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    return tomorrow.toISOString().split('T')[0];
+  }
+  
+  // Handle relative time expressions (e.g., "last week", "last month")
+  if (dateStr.includes('last')) {
+    const relativeTime = parseRelativeTime(dateStr);
+    if (relativeTime) {
+      return relativeTime.startTime.toISOString().split('T')[0];
+    }
+  }
 
   // Handle "15-18 June 2025" format
   if (dateStr.includes('-')) {
@@ -207,6 +288,7 @@ module.exports = {
   extractIntentWithGemini,
   processWithClaude,
   parseNaturalDate,
+  parseRelativeTime,
   geminiModel,
 };
 

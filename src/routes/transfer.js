@@ -95,13 +95,29 @@ router.post('/', authenticateByPhone, async (req, res) => {
       });
     }
 
-    // Check if there's a pending beneficiary selection for this customer
+    // Check if there's a pending transaction for this customer
     const pendingTransaction = Array.from(pendingTransactions.values()).find(
-      t => t.customerId === customerId && t.type === 'transfer' && t.status === 'beneficiary_selection'
+      t => t.customerId === customerId && t.type === 'transfer' && (t.status === 'beneficiary_selection' || t.status === 'account_selection')
     );
 
+    // If there's a pending account selection, handle it first
+    if (pendingTransaction && pendingTransaction.status === 'account_selection') {
+      const selectionResult = await handleAccountSelection(trimmedMessage, pendingTransaction);
+      if (selectionResult) {
+        return res.json({
+          success: true,
+          response: selectionResult.response,
+          transactionId: selectionResult.transactionId,
+        });
+      }
+      return res.json({
+        success: true,
+        response: "Your message is not clear. Please provide the account ending digits (e.g., '2725' or '0833') or say 'first' or 'second'.",
+      });
+    }
+
     // If there's a pending beneficiary selection, handle selection
-    if (pendingTransaction) {
+    if (pendingTransaction && pendingTransaction.status === 'beneficiary_selection') {
       // Validate that the selection message makes sense
       if (!isValidSelectionMessage(trimmedMessage, pendingTransaction)) {
         return res.json({
@@ -204,6 +220,39 @@ async function processTransferRequest(message, customerId) {
     };
   }
 
+  // If customer has multiple accounts, ask them to select which account to use
+  if (accounts.length > 1) {
+    // Check if any account has sufficient balance
+    const accountsWithBalance = accounts.filter(acc => acc.balance >= amount);
+    if (accountsWithBalance.length === 0) {
+      return {
+        response: 'You do not have sufficient balance in any account to make this transfer. Please top up.',
+        action: null,
+      };
+    }
+
+    // Create pending transaction for account selection
+    const accountEndings = accounts.map(acc => acc.accountNumber.slice(-4)).join(', ');
+    const transactionId = createPendingTransaction({
+      type: 'transfer',
+      customerId: customerId,
+      data: {
+        accounts: accounts,
+        amount: amount,
+        recipientName: recipientName,
+        accountNumber: accountNumber,
+        status: 'account_selection',
+      },
+    });
+
+    return {
+      response: `You have ${accounts.length} accounts. Which account should I deduct from? Accounts ending: ${accountEndings}?`,
+      transactionId: transactionId,
+      action: 'select_account',
+    };
+  }
+
+  // Single account - proceed with that account
   const account = accounts[0];
   if (account.balance < amount) {
     // Generate AI response (10-12 words exactly)
@@ -299,6 +348,192 @@ async function processTransferRequest(message, customerId) {
   return {
     response: `I found ${beneficiaries.length} people named "${recipientName}". Please confirm which account ending: ${accountEndings}?`,
     transactionId: transactionId,
+    action: 'select_beneficiary',
+  };
+}
+
+/**
+ * Handle account selection for transfer (which account to deduct from)
+ */
+async function handleAccountSelection(message, pendingTransaction) {
+  const accountEndingMatch = message.match(/(\d{4})/);
+  const accountEnding = accountEndingMatch ? accountEndingMatch[1] : null;
+
+  if (!accountEnding) {
+    // Try to extract by position (first, second, etc.)
+    const lowerMessage = message.toLowerCase().trim();
+    const numberMatch = lowerMessage.match(/(\d+)|(first|second|third|fourth|fifth|one|two|three|four|five)/i);
+    
+    if (numberMatch) {
+      let index = 0;
+      if (numberMatch[1]) {
+        index = parseInt(numberMatch[1]) - 1;
+      } else {
+        const words = ['first', 'second', 'third', 'fourth', 'fifth', 'one', 'two', 'three', 'four', 'five'];
+        const wordIndex = words.findIndex(w => lowerMessage.includes(w));
+        if (wordIndex >= 0 && wordIndex < 5) {
+          index = wordIndex % 5; // Map 'one' to 0, 'two' to 1, etc.
+        }
+      }
+      
+      if (index >= 0 && index < pendingTransaction.accounts.length) {
+        const selectedAccount = pendingTransaction.accounts[index];
+        
+        // Check balance
+        if (selectedAccount.balance < pendingTransaction.amount) {
+          const accountEndings = pendingTransaction.accounts.map(acc => acc.accountNumber.slice(-4)).join(', ');
+          return {
+            response: `Insufficient balance in account ending ${selectedAccount.accountNumber.slice(-4)}. Your accounts end with: ${accountEndings}`,
+            transactionId: pendingTransaction.id,
+            action: 'select_account',
+          };
+        }
+
+        // Update pending transaction with selected account
+        pendingTransaction.sourceAccount = selectedAccount;
+        pendingTransaction.accountId = selectedAccount.id;
+        pendingTransaction.amount = pendingTransaction.amount || pendingTransaction.data?.amount;
+        pendingTransaction.recipientName = pendingTransaction.recipientName || pendingTransaction.data?.recipientName;
+        pendingTransaction.accountNumber = pendingTransaction.accountNumber || pendingTransaction.data?.accountNumber;
+        pendingTransaction.status = 'processing';
+        delete pendingTransaction.accounts;
+        
+        // Update in Map
+        pendingTransactions.set(pendingTransaction.id, pendingTransaction);
+
+        // Continue with transfer processing
+        return await continueTransferAfterAccountSelection(pendingTransaction);
+      }
+    }
+
+    const accountEndings = pendingTransaction.accounts.map(acc => acc.accountNumber.slice(-4)).join(', ');
+    return {
+      response: `I didn't understand. Please specify which account ending: ${accountEndings}?`,
+      transactionId: pendingTransaction.id,
+      action: 'select_account',
+    };
+  }
+
+  const selectedAccount = pendingTransaction.accounts.find(
+    acc => acc.accountNumber.slice(-4) === accountEnding
+  );
+
+  if (!selectedAccount) {
+    const accountEndings = pendingTransaction.accounts.map(acc => acc.accountNumber.slice(-4)).join(', ');
+    return {
+      response: `I couldn't find an account ending with ${accountEnding}. Your accounts end with: ${accountEndings}`,
+      transactionId: pendingTransaction.id,
+      action: 'select_account',
+    };
+  }
+
+  // Check balance
+  if (selectedAccount.balance < pendingTransaction.amount) {
+    const accountEndings = pendingTransaction.accounts.map(acc => acc.accountNumber.slice(-4)).join(', ');
+    return {
+      response: `Insufficient balance in account ending ${accountEnding}. Your accounts end with: ${accountEndings}`,
+      transactionId: pendingTransaction.id,
+      action: 'select_account',
+    };
+  }
+
+  // Update pending transaction with selected account
+  pendingTransaction.sourceAccount = selectedAccount;
+  pendingTransaction.accountId = selectedAccount.id;
+  pendingTransaction.amount = pendingTransaction.amount || pendingTransaction.data?.amount;
+  pendingTransaction.recipientName = pendingTransaction.recipientName || pendingTransaction.data?.recipientName;
+  pendingTransaction.accountNumber = pendingTransaction.accountNumber || pendingTransaction.data?.accountNumber;
+  pendingTransaction.status = 'processing';
+  delete pendingTransaction.accounts;
+  
+  // Update in Map
+  pendingTransactions.set(pendingTransaction.id, pendingTransaction);
+
+  // Continue with transfer processing
+  return await continueTransferAfterAccountSelection(pendingTransaction);
+}
+
+/**
+ * Continue transfer processing after account selection
+ */
+async function continueTransferAfterAccountSelection(pendingTransaction) {
+  const amount = pendingTransaction.amount || pendingTransaction.data?.amount;
+  const accountId = pendingTransaction.accountId;
+  const accountNumber = pendingTransaction.accountNumber || pendingTransaction.data?.accountNumber;
+  const recipientName = pendingTransaction.recipientName || pendingTransaction.data?.recipientName;
+
+  // If account number is provided, verify it first
+  if (accountNumber) {
+    try {
+      const { verifyAccount } = require('../services/bankVerification');
+      const accountDetails = await verifyAccount(accountNumber);
+      
+      // Update pending transaction with verified account details
+      pendingTransaction.beneficiary = {
+        id: null,
+        name: accountDetails.account_name,
+        accountNumber: accountDetails.account_number,
+        bankName: accountDetails.bank_name,
+        bankAccount: accountDetails.account_number,
+        last4Digits: accountDetails.account_number.slice(-4),
+        source: 'account_verification',
+      };
+      pendingTransaction.status = 'pending_pin';
+      
+      // Update in Map
+      pendingTransactions.set(pendingTransaction.id, pendingTransaction);
+
+      return {
+        response: `I verified account ${accountDetails.account_number} belongs to ${accountDetails.account_name} at ${accountDetails.bank_name}. Please verify your PIN to complete the transfer of ₦${amount.toLocaleString()}.`,
+        transactionId: pendingTransaction.id,
+        action: 'verify_pin',
+      };
+    } catch (error) {
+      console.error('Account verification error:', error);
+      return {
+        response: `I couldn't verify account number ${accountNumber}. Please check the account number and try again.`,
+        action: null,
+      };
+    }
+  }
+
+  // Search for beneficiaries by name
+  const { searchBeneficiaries } = require('../services/database');
+  const beneficiaries = await searchBeneficiaries(pendingTransaction.customerId, recipientName);
+
+  if (beneficiaries.length === 0) {
+    return {
+      response: `We did not find that user "${recipientName}". Please verify the name or try using an account number instead.`,
+      action: null,
+    };
+  }
+
+  if (beneficiaries.length === 1) {
+    // Single match - update pending transaction and ask for PIN verification
+    pendingTransaction.beneficiary = beneficiaries[0];
+    pendingTransaction.status = 'pending_pin';
+    
+    // Update in Map
+    pendingTransactions.set(pendingTransaction.id, pendingTransaction);
+
+    return {
+      response: `I found ${beneficiaries[0].name} with account ending in ${beneficiaries[0].last4Digits}. Please verify your PIN to complete the transfer of ₦${amount.toLocaleString()}.`,
+      transactionId: pendingTransaction.id,
+      action: 'verify_pin',
+    };
+  }
+
+  // Multiple matches - ask for confirmation
+  const accountEndings = beneficiaries.map(b => b.last4Digits).join(', ');
+  pendingTransaction.beneficiaries = beneficiaries;
+  pendingTransaction.status = 'beneficiary_selection';
+  
+  // Update in Map
+  pendingTransactions.set(pendingTransaction.id, pendingTransaction);
+
+  return {
+    response: `I found ${beneficiaries.length} people named "${recipientName}". Please confirm which account ending: ${accountEndings}?`,
+    transactionId: pendingTransaction.id,
     action: 'select_beneficiary',
   };
 }
@@ -453,4 +688,9 @@ function extractBeneficiarySelection(selection, beneficiaries) {
 }
 
 module.exports = router;
+module.exports.processTransferRequest = processTransferRequest;
+module.exports.handleAccountSelection = handleAccountSelection;
+module.exports.handleBeneficiarySelection = handleBeneficiarySelection;
+module.exports.isValidSelectionMessage = isValidSelectionMessage;
+module.exports.extractBeneficiarySelection = extractBeneficiarySelection;
 
