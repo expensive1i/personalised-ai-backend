@@ -7,6 +7,230 @@ const { detectNetwork, normalizePhone } = require('../utils/networkDetector');
 const { purchaseAirtime } = require('../services/ebills');
 
 /**
+ * Process airtime purchase request
+ * @param {string} message - Natural language message
+ * @param {number} customerId - Customer ID
+ * @returns {Promise<Object>} Result object with response, transactionId, action
+ */
+async function processBuyAirtimeRequest(message, customerId) {
+  // Extract amount from message
+  const amountMatch = message.match(/(\d+(?:,\d{3})*(?:\.\d{2})?)/);
+  const amount = amountMatch ? parseFloat(amountMatch[1].replace(/,/g, '')) : null;
+
+  if (!amount || amount <= 0) {
+    return {
+      success: false,
+      response: "I need the amount to purchase. For example: 'buy airtime 1000 to 07016409616'",
+    };
+  }
+
+  // Check if customer wants to buy for themselves (e.g., "for me", "for myself", "to my number")
+  const selfPurchasePatterns = [
+    /\b(for\s+me|for\s+myself|to\s+my\s+number|to\s+my\s+phone|to\s+me)\b/i,
+  ];
+
+  let isSelfPurchase = false;
+  for (const pattern of selfPurchasePatterns) {
+    if (pattern.test(message)) {
+      isSelfPurchase = true;
+      break;
+    }
+  }
+
+  let phoneNumber = null;
+  let normalizedPhone = null;
+
+  if (isSelfPurchase) {
+    // Get customer's phone number from database
+    const customer = await getCustomerById(customerId);
+    if (!customer || !customer.phoneNumber) {
+      return {
+        success: false,
+        response: 'Unable to retrieve your phone number. Please specify the phone number explicitly.',
+      };
+    }
+    phoneNumber = customer.phoneNumber;
+    normalizedPhone = normalizePhone(phoneNumber);
+  } else {
+    // Extract phone number from message (look for patterns like "to 07016409616", "for 08012345678", etc.)
+    const phonePatterns = [
+      /(?:to|for|send|buy)\s+(\+?234?\d{10,11})/i,
+      /(\+?234?\d{10,11})/,
+      /(\d{11})/,
+    ];
+
+    for (const pattern of phonePatterns) {
+      const match = message.match(pattern);
+      if (match) {
+        phoneNumber = match[1];
+        break;
+      }
+    }
+
+    if (!phoneNumber) {
+      return {
+        success: false,
+        response: "I need the phone number to send airtime to. For example: 'buy airtime 1000 to 07016409616'",
+      };
+    }
+
+    normalizedPhone = normalizePhone(phoneNumber);
+  }
+
+  if (!normalizedPhone || normalizedPhone.length !== 11) {
+    return {
+      success: false,
+      response: 'Invalid phone number format. Please provide a valid Nigerian phone number.',
+    };
+  }
+
+  // Detect network
+  const networkInfo = detectNetwork(normalizedPhone);
+  if (!networkInfo) {
+    return {
+      success: false,
+      response: 'Unable to detect network provider from phone number. Please ensure the phone number is valid.',
+    };
+  }
+
+  // Validate amount based on network
+  const minAmount = networkInfo.service_id === 'mtn' ? 10 : 50;
+  const maxAmount = 50000;
+
+  if (amount < minAmount) {
+    return {
+      success: false,
+      response: `Minimum airtime purchase is ₦${minAmount} for ${networkInfo.name}.`,
+    };
+  }
+
+  if (amount > maxAmount) {
+    return {
+      success: false,
+      response: `Maximum airtime purchase is ₦${maxAmount}.`,
+    };
+  }
+
+  // Get customer accounts to check balance
+  const accounts = await getAccountBalance(customerId);
+  if (!accounts || accounts.length === 0) {
+    return {
+      success: false,
+      response: 'No account found. Please create an account first.',
+    };
+  }
+
+  // Use first account for airtime purchase
+  const account = accounts[0];
+
+  // Check balance
+  if (account.balance < amount) {
+    return {
+      success: false,
+      response: 'Insufficient balance. Please top up your account to purchase airtime.',
+    };
+  }
+
+  // If self-purchase, process immediately without PIN verification
+  if (isSelfPurchase) {
+    try {
+      // Generate unique request_id for eBills API (max 50 chars)
+      const request_id = `AIR-${Date.now()}-${Math.random().toString(36).substring(2, 9).toUpperCase()}`;
+
+      // Purchase airtime from eBills API
+      const ebillsResponse = await purchaseAirtime({
+        request_id,
+        phone: normalizedPhone,
+        service_id: networkInfo.service_id,
+        amount: parseInt(amount),
+      });
+
+      // Check if order is successful
+      const orderStatus = ebillsResponse.data?.status;
+      const isSuccessful = orderStatus === 'completed-api' || orderStatus === 'processing-api';
+
+      if (isSuccessful) {
+        const reference = `AIR${Date.now()}${Math.random().toString(36).substr(2, 9).toUpperCase()}`;
+        const now = new Date();
+
+        // Deduct from account and create transaction record
+        await prisma.$transaction(async (tx) => {
+          // Update account balance
+          await tx.account.update({
+            where: { id: BigInt(account.id) },
+            data: { balance: account.balance - parseFloat(amount) },
+          });
+
+          // Create transaction record
+          await tx.transaction.create({
+            data: {
+              customerId: BigInt(customerId),
+              accountId: BigInt(account.id),
+              receiverName: `Airtime Purchase - ${networkInfo.name}`,
+              bankName: networkInfo.name,
+              bankAccount: normalizedPhone,
+              accountNumber: normalizedPhone,
+              amount: parseFloat(amount),
+              balanceBefore: account.balance,
+              balanceAfter: account.balance - parseFloat(amount),
+              transactionDate: now,
+              createdAt: now,
+              status: orderStatus === 'completed-api' ? 'success' : 'pending',
+              transactionType: 'debit',
+              reference: reference,
+            },
+          });
+        });
+
+        // Generate success response
+        const successMessage = orderStatus === 'completed-api'
+          ? `Airtime purchase of ₦${amount.toLocaleString()} for ${normalizedPhone} (${networkInfo.name}) completed successfully!`
+          : `Airtime purchase of ₦${amount.toLocaleString()} for ${normalizedPhone} (${networkInfo.name}) is being processed.`;
+
+        return {
+          success: true,
+          response: successMessage,
+          transactionId: null,
+          action: null,
+        };
+      } else {
+        throw new Error(`Airtime purchase failed. Status: ${orderStatus}`);
+      }
+    } catch (error) {
+      console.error('Self-purchase airtime error:', error);
+      return {
+        success: false,
+        response: `Failed to purchase airtime: ${error.message}`,
+      };
+    }
+  }
+
+  // For purchases to other numbers, require PIN verification
+  const transactionId = createPendingTransaction({
+    type: 'airtime',
+    customerId: customerId,
+    data: {
+      accountId: account.id,
+      phone: normalizedPhone,
+      service_id: networkInfo.service_id,
+      networkName: networkInfo.name,
+      amount: amount,
+      status: 'pending_pin',
+    },
+  });
+
+  // Generate AI response message
+  const response = `Great! I'll purchase ₦${amount.toLocaleString()} airtime for ${normalizedPhone} (${networkInfo.name}). Please verify your PIN to complete this transaction.`;
+
+  return {
+    success: true,
+    response: response,
+    transactionId: transactionId,
+    action: 'verify_pin',
+  };
+}
+
+/**
  * @swagger
  * /api/buy-airtime:
  *   post:
@@ -87,219 +311,13 @@ router.post('/', authenticateByPhone, async (req, res) => {
       });
     }
 
-    // Extract amount from message
-    const amountMatch = message.match(/(\d+(?:,\d{3})*(?:\.\d{2})?)/);
-    const amount = amountMatch ? parseFloat(amountMatch[1].replace(/,/g, '')) : null;
+    const result = await processBuyAirtimeRequest(message, customerId);
 
-    if (!amount || amount <= 0) {
-      return res.status(400).json({
-        success: false,
-        response: "I need the amount to purchase. For example: 'buy airtime 1000 to 07016409616'",
-      });
+    if (!result.success) {
+      return res.status(400).json(result);
     }
 
-    // Check if customer wants to buy for themselves (e.g., "for me", "for myself", "to my number")
-    const selfPurchasePatterns = [
-      /\b(for\s+me|for\s+myself|to\s+my\s+number|to\s+my\s+phone|to\s+me)\b/i,
-    ];
-
-    let isSelfPurchase = false;
-    for (const pattern of selfPurchasePatterns) {
-      if (pattern.test(message)) {
-        isSelfPurchase = true;
-        break;
-      }
-    }
-
-    let phoneNumber = null;
-    let normalizedPhone = null;
-
-    if (isSelfPurchase) {
-      // Get customer's phone number from database
-      const customer = await getCustomerById(customerId);
-      if (!customer || !customer.phoneNumber) {
-        return res.status(400).json({
-          success: false,
-          response: 'Unable to retrieve your phone number. Please specify the phone number explicitly.',
-        });
-      }
-      phoneNumber = customer.phoneNumber;
-      normalizedPhone = normalizePhone(phoneNumber);
-    } else {
-      // Extract phone number from message (look for patterns like "to 07016409616", "for 08012345678", etc.)
-      const phonePatterns = [
-        /(?:to|for|send|buy)\s+(\+?234?\d{10,11})/i,
-        /(\+?234?\d{10,11})/,
-        /(\d{11})/,
-      ];
-
-      for (const pattern of phonePatterns) {
-        const match = message.match(pattern);
-        if (match) {
-          phoneNumber = match[1];
-          break;
-        }
-      }
-
-      if (!phoneNumber) {
-        return res.status(400).json({
-          success: false,
-          response: "I need the phone number to send airtime to. For example: 'buy airtime 1000 to 07016409616'",
-        });
-      }
-
-      normalizedPhone = normalizePhone(phoneNumber);
-    }
-
-    if (!normalizedPhone || normalizedPhone.length !== 11) {
-      return res.status(400).json({
-        success: false,
-        response: 'Invalid phone number format. Please provide a valid Nigerian phone number.',
-      });
-    }
-
-    // Detect network
-    const networkInfo = detectNetwork(normalizedPhone);
-    if (!networkInfo) {
-      return res.status(400).json({
-        success: false,
-        response: 'Unable to detect network provider from phone number. Please ensure the phone number is valid.',
-      });
-    }
-
-    // Validate amount based on network
-    const minAmount = networkInfo.service_id === 'mtn' ? 10 : 50;
-    const maxAmount = 50000;
-
-    if (amount < minAmount) {
-      return res.status(400).json({
-        success: false,
-        response: `Minimum airtime purchase is ₦${minAmount} for ${networkInfo.name}.`,
-      });
-    }
-
-    if (amount > maxAmount) {
-      return res.status(400).json({
-        success: false,
-        response: `Maximum airtime purchase is ₦${maxAmount}.`,
-      });
-    }
-
-    // Get customer accounts to check balance
-    const accounts = await getAccountBalance(customerId);
-    if (!accounts || accounts.length === 0) {
-      return res.status(400).json({
-        success: false,
-        response: 'No account found. Please create an account first.',
-      });
-    }
-
-    // Use first account for airtime purchase
-    const account = accounts[0];
-
-    // Check balance
-    if (account.balance < amount) {
-      return res.status(400).json({
-        success: false,
-        response: 'Insufficient balance. Please top up your account to purchase airtime.',
-      });
-    }
-
-    // If self-purchase, process immediately without PIN verification
-    if (isSelfPurchase) {
-      try {
-        // Generate unique request_id for eBills API (max 50 chars)
-        const request_id = `AIR-${Date.now()}-${Math.random().toString(36).substring(2, 9).toUpperCase()}`;
-
-        // Purchase airtime from eBills API
-        const ebillsResponse = await purchaseAirtime({
-          request_id,
-          phone: normalizedPhone,
-          service_id: networkInfo.service_id,
-          amount: parseInt(amount),
-        });
-
-        // Check if order is successful
-        const orderStatus = ebillsResponse.data?.status;
-        const isSuccessful = orderStatus === 'completed-api' || orderStatus === 'processing-api';
-
-        if (isSuccessful) {
-          const reference = `AIR${Date.now()}${Math.random().toString(36).substr(2, 9).toUpperCase()}`;
-          const now = new Date();
-
-          // Deduct from account and create transaction record
-          await prisma.$transaction(async (tx) => {
-            // Update account balance
-            await tx.account.update({
-              where: { id: BigInt(account.id) },
-              data: { balance: account.balance - parseFloat(amount) },
-            });
-
-            // Create transaction record
-            await tx.transaction.create({
-              data: {
-                customerId: BigInt(customerId),
-                accountId: BigInt(account.id),
-                receiverName: `Airtime Purchase - ${networkInfo.name}`,
-                bankName: networkInfo.name,
-                bankAccount: normalizedPhone,
-                accountNumber: normalizedPhone,
-                amount: parseFloat(amount),
-                balanceBefore: account.balance,
-                balanceAfter: account.balance - parseFloat(amount),
-                transactionDate: now,
-                createdAt: now,
-                status: orderStatus === 'completed-api' ? 'success' : 'pending',
-                transactionType: 'debit',
-                reference: reference,
-              },
-            });
-          });
-
-          // Generate success response
-          const successMessage = orderStatus === 'completed-api'
-            ? `Airtime purchase of ₦${amount.toLocaleString()} for ${normalizedPhone} (${networkInfo.name}) completed successfully!`
-            : `Airtime purchase of ₦${amount.toLocaleString()} for ${normalizedPhone} (${networkInfo.name}) is being processed.`;
-
-          return res.json({
-            success: true,
-            response: successMessage,
-          });
-        } else {
-          throw new Error(`Airtime purchase failed. Status: ${orderStatus}`);
-        }
-      } catch (error) {
-        console.error('Self-purchase airtime error:', error);
-        return res.status(500).json({
-          success: false,
-          response: `Failed to purchase airtime: ${error.message}`,
-        });
-      }
-    }
-
-    // For purchases to other numbers, require PIN verification
-    const transactionId = createPendingTransaction({
-      type: 'airtime',
-      customerId: customerId,
-      data: {
-        accountId: account.id,
-        phone: normalizedPhone,
-        service_id: networkInfo.service_id,
-        networkName: networkInfo.name,
-        amount: amount,
-        status: 'pending_pin',
-      },
-    });
-
-    // Generate AI response message
-    const response = `Great! I'll purchase ₦${amount.toLocaleString()} airtime for ${normalizedPhone} (${networkInfo.name}). Please verify your PIN to complete this transaction.`;
-
-    res.json({
-      success: true,
-      response: response,
-      transactionId: transactionId,
-      action: 'verify_pin',
-    });
+    res.json(result);
 
   } catch (error) {
     console.error('Buy airtime route error:', error);
@@ -312,4 +330,5 @@ router.post('/', authenticateByPhone, async (req, res) => {
 });
 
 module.exports = router;
+module.exports.processBuyAirtimeRequest = processBuyAirtimeRequest;
 

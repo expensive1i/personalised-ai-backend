@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { authenticateByPhone } = require('../middleware/auth');
 const ConversationManager = require('../services/conversationManager');
+const { formatResponse } = require('../utils/ssmlFormatter');
 
 // Store active conversations (in production, use Redis or similar)
 const conversations = new Map();
@@ -128,10 +129,17 @@ router.post('/', authenticateByPhone, async (req, res) => {
     // Process the message (automatically scoped to authenticated customer)
     const result = await conversationManager.processMessage(message.trim());
 
+    // Format response with SSML for better TTS
+    const ssmlResponse = formatResponse(result.response, { 
+      wrapInSpeak: true,
+      addPauses: true,
+      emphasizeImportant: true 
+    });
+
     // Return only success and response
     res.json({
       success: true,
-      response: result.response,
+      response: ssmlResponse,
     });
   } catch (error) {
     console.error('Query AI route error:', error);

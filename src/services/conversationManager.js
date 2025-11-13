@@ -470,8 +470,15 @@ class ConversationManager {
         return await this.handleQueryTransactions(parameters);
 
       case 'query_bill_payment':
-      case 'buy_airtime':
         return await this.handleQueryBillPayments(parameters);
+
+      case 'buy_airtime':
+        // buy_airtime should be handled by the message endpoint directly, not here
+        // If it reaches here, it's a fallback - return a helpful message
+        return {
+          response: "I understand you want to buy airtime. Please use a command like 'buy 1000 airtime to 07016409616' or 'buy airtime for me'.",
+          action: null,
+        };
 
       case 'make_transfer':
         return await this.handleMakeTransfer(parameters, originalMessage);

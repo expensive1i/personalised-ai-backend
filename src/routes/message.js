@@ -12,8 +12,10 @@ const {
   processInternalTransferRequest,
   handleAccountSelection: handleInternalAccountSelection 
 } = require('../routes/internalTransfer');
+const { processBuyAirtimeRequest } = require('../routes/buyAirtime');
 const ConversationManager = require('../services/conversationManager');
 const { pendingTransactions } = require('../services/pendingTransactions');
+const { formatResponse } = require('../utils/ssmlFormatter');
 
 // Store active conversations (in production, use Redis or similar)
 const conversations = new Map();
@@ -193,6 +195,19 @@ router.post('/', authenticateByPhone, async (req, res) => {
 
     console.log('Detected intent:', intent.intent, 'Confidence:', intent.confidence);
 
+    // Fallback: Check for explicit purchase keywords if intent is unclear or misclassified
+    // This helps catch cases like "send 1000 airtime" which should be buy_airtime, not query
+    const purchaseKeywords = /\b(buy|purchase|send|get)\s+.*?\b(airtime|data|cable|internet|electricity)\b/i;
+    const isPurchaseRequest = purchaseKeywords.test(trimmedMessage) && 
+                              (trimmedMessage.match(/\d+/) || trimmedMessage.includes('for me') || trimmedMessage.includes('for myself'));
+    
+    // Override intent if it's clearly a purchase request but was misclassified as query
+    if (isPurchaseRequest && (intent.intent === 'query_bill_payment' || intent.intent === 'query_transaction')) {
+      console.log('Overriding intent: detected purchase request but got query intent');
+      intent.intent = 'buy_airtime';
+      intent.confidence = 0.9;
+    }
+
     // Route to appropriate handler based on intent
     let result;
 
@@ -209,16 +224,8 @@ router.post('/', authenticateByPhone, async (req, res) => {
         break;
 
       case 'buy_airtime':
-        // Route to airtime purchase - need to handle inline
-        // For now, use ConversationManager which handles airtime
-        {
-          let conversationManager = conversations.get(customerId);
-          if (!conversationManager) {
-            conversationManager = new ConversationManager(customerId);
-            conversations.set(customerId, conversationManager);
-          }
-          result = await conversationManager.processMessage(trimmedMessage);
-        }
+        // Route to airtime purchase handler
+        result = await processBuyAirtimeRequest(trimmedMessage, customerId);
         break;
 
       case 'query_transaction':
@@ -256,10 +263,18 @@ router.post('/', authenticateByPhone, async (req, res) => {
         break;
     }
 
-    // Return consistent response format
+    // Format response with SSML for better TTS
+    const rawResponse = result.response || result.message || 'Request processed';
+    const ssmlResponse = formatResponse(rawResponse, { 
+      wrapInSpeak: true,
+      addPauses: true,
+      emphasizeImportant: true 
+    });
+    
+    // Return consistent response format with SSML
     res.json({
       success: true,
-      response: result.response || result.message || 'Request processed',
+      response: ssmlResponse,
       transactionId: result.transactionId || null,
       action: result.action || null,
       data: result.data || null,

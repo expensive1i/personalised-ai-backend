@@ -104,7 +104,7 @@ model Document {
   updatedAt    DateTime?              @updatedAt @map("updated_at") @db.Timestamptz(6)
   deletedAt    DateTime?              @map("deleted_at") @db.Timestamptz(6)
   content      String
-  embedding    Unsupported("vector")?
+  embedding    String?                // Changed from Unsupported("vector")? to String? to avoid pgvector dependency
   metadata     Json?
   documentType String?                @map("document_type")
   user_id      BigInt?

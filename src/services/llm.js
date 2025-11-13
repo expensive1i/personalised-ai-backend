@@ -43,11 +43,14 @@ Analyze this message and extract:
 4. Whether clarification is needed
 5. Is this a banking-related question? (true/false)
 
-IMPORTANT: If the question is about airtime, data, cable, internet, or electricity, use intent "query_bill_payment" and set transactionType to the specific type (airtime, data, cable, internet, electricity).
+CRITICAL INTENT DISTINCTION:
+- Use "buy_airtime" when the user wants to PURCHASE/BUY airtime (e.g., "buy 1000 airtime", "send 500 airtime to 07016409616", "buy airtime for me")
+- Use "query_bill_payment" when the user wants to QUERY/VIEW past airtime purchases (e.g., "show me my airtime purchases", "how much airtime did I buy", "airtime transactions last week")
+- Same logic applies to data, cable, internet, electricity: "buy" = purchase action, "show/query/view" = query intent
 
 Respond ONLY in valid JSON format:
 {
-    "intent": "query_transaction|query_bill_payment|make_transfer|check_balance|get_last_transaction|general_question|unclear",
+    "intent": "query_transaction|query_bill_payment|make_transfer|internal_transfer|buy_airtime|check_balance|get_last_transaction|general_question|unclear",
     "parameters": {
         "startDate": "YYYY-MM-DD or null",
         "endDate": "YYYY-MM-DD or null",
