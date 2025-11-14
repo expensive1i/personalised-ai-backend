@@ -46,15 +46,35 @@ function detectNetwork(phone) {
     return null;
   }
 
-  // Normalize phone number: remove +234, spaces, and ensure it starts with 0
+  // Normalize phone number - use simple normalization for network detection
+  // Remove +234, spaces, and ensure it starts with 0
   let normalizedPhone = phone.replace(/^\+234/, '0').replace(/\s+/g, '').trim();
 
   // If it doesn't start with 0, add it
   if (!normalizedPhone.startsWith('0')) {
     normalizedPhone = '0' + normalizedPhone;
   }
+  
+  // Remove all non-digit characters
+  normalizedPhone = normalizedPhone.replace(/\D/g, '');
+  
+  // Ensure it's 11 digits starting with 0
+  if (normalizedPhone.length !== 11 || !normalizedPhone.startsWith('0')) {
+    // Try using the enhanced normalizePhone function if available
+    // (This handles voice-to-text errors and more edge cases)
+    try {
+      const enhancedNormalized = normalizePhone(phone);
+      if (enhancedNormalized && enhancedNormalized.length === 11) {
+        normalizedPhone = enhancedNormalized;
+      } else {
+        return null;
+      }
+    } catch (e) {
+      return null;
+    }
+  }
 
-  // Extract first 4 digits
+  // Extract first 4 digits (network prefix)
   const prefix = normalizedPhone.substring(0, 4);
 
   // Check each network
@@ -153,32 +173,29 @@ function normalizePhone(phone) {
   
   // Step 8: Validate and return
   // Nigerian phone numbers should be 11 digits starting with 0
-  // First digit after 0 should be 0-7 (network codes)
-  if (cleaned.length === 11 && /^0[0-7]\d{9}$/.test(cleaned)) {
+  // Network is determined by the 4-digit prefix (e.g., 0814, 0812, 0803), not just the second digit
+  // So we accept any digit 0-9 as the second digit
+  if (cleaned.length === 11 && /^0\d{10}$/.test(cleaned)) {
     return cleaned;
   }
   
   // If it's 10 digits and valid, add 0 at the start
-  if (cleaned.length === 10 && /^[0-7]\d{9}$/.test(cleaned)) {
+  if (cleaned.length === 10 && /^\d{10}$/.test(cleaned)) {
     return '0' + cleaned;
   }
   
   // If it's 12 digits, might have an extra leading digit - try removing first digit
   if (cleaned.length === 12 && cleaned.startsWith('0')) {
     const withoutFirst = cleaned.substring(1);
-    if (/^0[0-7]\d{9}$/.test(withoutFirst)) {
+    if (/^0\d{10}$/.test(withoutFirst)) {
       return withoutFirst;
     }
   }
   
-  // Last resort: if we have 11 digits but doesn't match pattern, still return if it starts with 0
+  // Last resort: if we have 11 digits, return if it starts with 0 and is all digits
   // This is more forgiving for edge cases from voice transcription
   if (cleaned.length === 11 && cleaned.startsWith('0') && /^\d{11}$/.test(cleaned)) {
-    // Check if second digit is 0-7 (network code)
-    const secondDigit = parseInt(cleaned[1]);
-    if (secondDigit >= 0 && secondDigit <= 7) {
-      return cleaned;
-    }
+    return cleaned;
   }
   
   return null;

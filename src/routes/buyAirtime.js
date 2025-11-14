@@ -54,17 +54,24 @@ async function processBuyAirtimeRequest(message, customerId) {
   } else {
     // Extract phone number from message - handle various formats including spaces
     // Try to find phone numbers in various formats: "to 080 1234 5678", "for +234 801 234 5678", etc.
+    // Note: Network is determined by 4-digit prefix, so accept any digit 0-9 as second digit
     const phonePatterns = [
       // Pattern for phone numbers with spaces/dashes after "to", "for", "send", "buy"
-      /(?:to|for|send|buy)\s+([\+]?234?\s?[0-7]\d{2}[\s\-]?\d{3}[\s\-]?\d{4})/i,
+      // Accept any digit 0-9 (not just 0-7) since prefixes like 0810, 0814, 0818 are valid
+      /(?:to|for|send|buy)\s+([\+]?234?\s?[0-9]\d{2}[\s\-]?\d{3}[\s\-]?\d{4})/i,
       // Pattern for phone numbers with +234 prefix and spaces
-      /(\+234\s?[0-7]\d{2}[\s\-]?\d{3}[\s\-]?\d{4})/i,
+      /(\+234\s?[0-9]\d{2}[\s\-]?\d{3}[\s\-]?\d{4})/i,
       // Pattern for phone numbers starting with 234 and spaces
-      /(234\s?[0-7]\d{2}[\s\-]?\d{3}[\s\-]?\d{4})/i,
-      // Pattern for phone numbers starting with 0 and spaces
-      /(0[0-7]\d{2}[\s\-]?\d{3}[\s\-]?\d{4})/i,
-      // Pattern for phone numbers without spaces (fallback)
-      /(\+?234?\d{10,11})/i,
+      /(234\s?[0-9]\d{2}[\s\-]?\d{3}[\s\-]?\d{4})/i,
+      // Pattern for phone numbers starting with 0 and spaces (accept any digit 0-9)
+      /(0[0-9]\d{2}[\s\-]?\d{3}[\s\-]?\d{4})/i,
+      // Pattern for phone numbers without spaces (fallback) - 11 digits starting with 0
+      /(0\d{10})/,
+      // Pattern for phone numbers with +234 prefix (no spaces)
+      /(\+234\d{10})/,
+      // Pattern for phone numbers with 234 prefix (no spaces)
+      /(234\d{10})/,
+      // Last resort: any 11-digit number
       /(\d{11})/,
     ];
 
