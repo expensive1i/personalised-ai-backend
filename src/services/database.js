@@ -761,9 +761,14 @@ async function getCustomerById(customerId) {
  */
 async function getCustomerByPhone(phoneNumber) {
   try {
-    const customer = await prisma.customer.findFirst({
+    // Normalize phone number to handle both +234 and 0 formats
+    const { normalizePhone } = require('../utils/networkDetector');
+    const normalizedPhone = normalizePhone(phoneNumber.toString()) || phoneNumber.toString().trim();
+    
+    // Try to find customer with normalized phone number first
+    let customer = await prisma.customer.findFirst({
       where: {
-        phoneNumber: phoneNumber.toString().trim(),
+        phoneNumber: normalizedPhone,
         deletedAt: null,
       },
       select: {
@@ -774,6 +779,48 @@ async function getCustomerByPhone(phoneNumber) {
         bankName: true,
       },
     });
+
+    // If not found with normalized format, try the original format (in case it's stored differently)
+    if (!customer) {
+      const originalPhone = phoneNumber.toString().trim();
+      // Also try with +234 format if normalized doesn't have it
+      const plus234Format = originalPhone.startsWith('+234') ? originalPhone : 
+                           originalPhone.startsWith('234') ? '+' + originalPhone :
+                           originalPhone.startsWith('0') ? '+234' + originalPhone.substring(1) : null;
+      
+      if (plus234Format) {
+        customer = await prisma.customer.findFirst({
+          where: {
+            phoneNumber: plus234Format,
+            deletedAt: null,
+          },
+          select: {
+            id: true,
+            customerName: true,
+            phoneNumber: true,
+            accountNumber: true,
+            bankName: true,
+          },
+        });
+      }
+      
+      // Also try the original format as-is
+      if (!customer && originalPhone !== normalizedPhone) {
+        customer = await prisma.customer.findFirst({
+          where: {
+            phoneNumber: originalPhone,
+            deletedAt: null,
+          },
+          select: {
+            id: true,
+            customerName: true,
+            phoneNumber: true,
+            accountNumber: true,
+            bankName: true,
+          },
+        });
+      }
+    }
 
     // Convert BigInt ID to number for JSON serialization
     if (customer) {

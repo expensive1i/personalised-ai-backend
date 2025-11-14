@@ -112,10 +112,22 @@ async function purchaseAirtime(params) {
     throw new Error('Request ID must be 50 characters or less');
   }
 
-  // Normalize phone number (remove +234, ensure it starts with 0)
-  let normalizedPhone = phone.replace(/^\+234/, '0').replace(/\s+/g, '');
-  if (!normalizedPhone.startsWith('0')) {
-    normalizedPhone = '0' + normalizedPhone;
+  // Normalize phone number using the enhanced normalization function
+  // This ensures consistent format (07016409616) for eBills API
+  const { normalizePhone } = require('../utils/networkDetector');
+  let normalizedPhone = normalizePhone(phone);
+  
+  // Fallback to manual normalization if normalizePhone returns null
+  if (!normalizedPhone) {
+    normalizedPhone = phone.replace(/^\+234/, '0').replace(/\s+/g, '');
+    if (!normalizedPhone.startsWith('0')) {
+      normalizedPhone = '0' + normalizedPhone;
+    }
+  }
+  
+  // Ensure it's in the correct format for eBills (11 digits starting with 0)
+  if (!normalizedPhone || normalizedPhone.length !== 11 || !normalizedPhone.startsWith('0')) {
+    throw new Error('Invalid phone number format. Phone number must be 11 digits starting with 0 (e.g., 07016409616)');
   }
 
   // Validate amount

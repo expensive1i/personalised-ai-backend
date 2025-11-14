@@ -34,10 +34,15 @@ async function authenticateByPhone(req, res, next) {
     const customer = await getCustomerByPhone(normalizedPhone);
 
     if (!customer) {
+      // Show both formats in error message for clarity
+      const originalFormat = phoneNumber.toString().trim();
+      const formatInfo = originalFormat !== normalizedPhone ? 
+        ` (normalized from ${originalFormat} to ${normalizedPhone})` : '';
+      
       return res.status(404).json({
         success: false,
         error: 'Customer not found',
-        message: `No customer found with phone number: ${normalizedPhone}. Please ensure you are registered.`,
+        message: `No customer found with phone number: ${normalizedPhone}${formatInfo}. Please ensure you are registered. You can use either +2347016409616 or 07016409616 format.`,
       });
     }
 

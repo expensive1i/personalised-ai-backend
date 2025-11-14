@@ -116,8 +116,18 @@ router.post('/register-account', async (req, res) => {
       });
     }
 
-    // Normalize phone number
-    const normalizedPhone = phoneNumber.trim().replace(/\s+/g, '');
+    // Normalize phone number using enhanced normalization
+    // Store in normalized format (07016409616) for consistency
+    const { normalizePhone } = require('../utils/networkDetector');
+    const normalizedPhone = normalizePhone(phoneNumber) || phoneNumber.trim().replace(/\s+/g, '');
+    
+    if (!normalizedPhone || normalizedPhone.length !== 11 || !normalizedPhone.startsWith('0')) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid phone number format',
+        message: 'Please provide a valid Nigerian phone number (e.g., +2347016409616 or 07016409616)',
+      });
+    }
 
     // Check if phone number already exists
     const existingCustomer = await getCustomerByPhone(normalizedPhone);
