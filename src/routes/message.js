@@ -16,6 +16,7 @@ const { processBuyAirtimeRequest } = require('../routes/buyAirtime');
 const ConversationManager = require('../services/conversationManager');
 const { pendingTransactions } = require('../services/pendingTransactions');
 const { formatResponse } = require('../utils/ssmlFormatter');
+const { normalizePhone } = require('../utils/networkDetector');
 
 // Store active conversations (in production, use Redis or similar)
 const conversations = new Map();
@@ -192,6 +193,17 @@ router.post('/', authenticateByPhone, async (req, res) => {
     // If no pending transactions, proceed with intent detection
     // Extract intent using LLM
     const intent = await extractIntentWithGemini(trimmedMessage, []);
+    
+    // Normalize phone number in parameters if present
+    if (intent.parameters && intent.parameters.phoneNumber) {
+      const normalized = normalizePhone(intent.parameters.phoneNumber);
+      if (normalized) {
+        intent.parameters.phoneNumber = normalized;
+      } else {
+        // If normalization failed, remove invalid phone number
+        delete intent.parameters.phoneNumber;
+      }
+    }
 
     console.log('Detected intent:', intent.intent, 'Confidence:', intent.confidence);
 

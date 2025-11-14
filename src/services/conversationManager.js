@@ -1,14 +1,17 @@
 const { extractIntentWithGemini, processWithClaude, parseNaturalDate, parseRelativeTime } = require('./llm');
 const {
   getLastTransaction,
+  getAllTransactions,
   getTransactionsByDateRange,
   getTransactionsByTimeRange,
   getBillPaymentsByDateRange,
+  getLastBillPayment,
   searchBeneficiaries,
   getAccountBalance,
   initiateTransfer,
   getCustomerById,
 } = require('./database');
+const { normalizePhone } = require('../utils/networkDetector');
 
 /**
  * Conversation Manager - Handles multi-turn dialogues and natural language queries
@@ -158,22 +161,23 @@ class ConversationManager {
     const tools = [
       {
         name: 'search_transactions',
-        description: 'Search user transactions with date range, time range, and type filters. Use this for questions about transfers, bank transactions, spending, etc. Supports date ranges (YYYY-MM-DD), relative time (e.g., "last 2 hours", "last 30 minutes", "last week"), or both. DO NOT use for airtime, data, cable, internet, or electricity - use search_bill_payments instead.',
+        description: 'Search user transactions with date range, time range, and type filters. Use this for questions about transfers, bank transactions, spending, etc. Supports date ranges (YYYY-MM-DD), relative time (e.g., "last 2 hours", "last 30 minutes", "last week"), or NO DATE RANGE for "all transactions" queries. If user says "all my transactions", "show everything", "no date needed", "all transactions" - set startDate and endDate to null. DO NOT use for airtime, data, cable, internet, or electricity - use search_bill_payments instead.',
         input_schema: {
           type: 'object',
           properties: {
-            startDate: { type: 'string', description: 'Start date (YYYY-MM-DD) or relative time (e.g., "last 2 hours", "last 30 minutes", "last week"). Can be null for "last transaction" queries' },
-            endDate: { type: 'string', description: 'End date (YYYY-MM-DD) or "now" for current time. Can be null for single date queries or relative time queries' },
+            startDate: { type: 'string', description: 'Start date (YYYY-MM-DD) or relative time (e.g., "last 2 hours", "last 30 minutes", "last week"). Can be null for "all transactions" or "no date range" queries' },
+            endDate: { type: 'string', description: 'End date (YYYY-MM-DD) or "now" for current time. Can be null for single date queries, relative time queries, or "all transactions" queries' },
             startTime: { type: 'string', description: 'Start time in ISO format (YYYY-MM-DDTHH:mm:ssZ). Use this for precise time-based queries. Overrides startDate if provided.' },
             endTime: { type: 'string', description: 'End time in ISO format (YYYY-MM-DDTHH:mm:ssZ). Use this for precise time-based queries. Overrides endDate if provided.' },
             transactionType: { type: 'string', description: 'Type: transfer, debit, credit, all' },
-            limit: { type: 'number', description: 'Maximum number of transactions to return (default: 100)' },
+            limit: { type: 'number', description: 'Maximum number of transactions to return (default: 1000 for "all transactions", 100 for date range queries)' },
+            getAll: { type: 'boolean', description: 'Set to true if user wants ALL transactions without date range (e.g., "all transactions", "show everything", "no date needed")' },
           },
         },
       },
       {
         name: 'search_bill_payments',
-        description: 'Search user bill payments (airtime, data, cable, internet, electricity) with date range and type filters. Use this for questions about airtime purchases, data purchases, cable TV payments, internet bills, electricity bills.',
+        description: 'Search user bill payments (airtime, data, cable, internet, electricity) with date range and type filters. Use this for questions about airtime purchases, data purchases, cable TV payments, internet bills, electricity bills. DO NOT use for "last" or "most recent" queries - use get_last_bill_payment instead.',
         input_schema: {
           type: 'object',
           properties: {
@@ -190,6 +194,16 @@ class ConversationManager {
         input_schema: {
           type: 'object',
           properties: {},
+        },
+      },
+      {
+        name: 'get_last_bill_payment',
+        description: 'Get the most recent bill payment (airtime, data, cable, internet, electricity) for the customer. Use for queries like: "last airtime purchase", "last bill payment", "most recent airtime", "recent airtime purchase", "what phone number did I last buy airtime for", "phone number from my last airtime", "who did I last send airtime to", "last airtime I transferred", "last airtime I bought". This tool returns the complete bill payment record including phone_number, amount, date, provider, etc. Can optionally filter by payment type (airtime, data, cable, internet, electricity).',
+        input_schema: {
+          type: 'object',
+          properties: {
+            paymentType: { type: 'string', description: 'Optional: Filter by payment type (airtime, data, cable, internet, electricity). For queries about "airtime", use "airtime". Leave empty or null for all types.' },
+          },
         },
       },
       {
@@ -284,8 +298,37 @@ class ConversationManager {
    */
   async executeTool(toolName, parameters) {
     try {
+      // Normalize phone numbers in parameters if present
+      if (parameters && typeof parameters === 'object') {
+        for (const key in parameters) {
+          if (key.toLowerCase().includes('phone') && typeof parameters[key] === 'string') {
+            const normalized = normalizePhone(parameters[key]);
+            if (normalized) {
+              parameters[key] = normalized;
+            }
+          }
+        }
+      }
+      
       switch (toolName) {
         case 'search_transactions':
+          // Check if user wants ALL transactions (no date range)
+          if (parameters.getAll === true || (!parameters.startDate && !parameters.endDate && !parameters.startTime && !parameters.endTime)) {
+            const limit = parameters.limit || 1000; // Default to 1000 for "all transactions"
+            const transactions = await getAllTransactions(
+              this.customerId,
+              parameters.transactionType || 'all',
+              limit
+            );
+            
+            return { 
+              transactions, 
+              count: transactions.length,
+              total: transactions.length,
+              allTransactions: true
+            };
+          }
+          
           // Handle time-based queries (e.g., "last 2 hours", "last 30 minutes")
           let startTime = parameters.startTime;
           let endTime = parameters.endTime;
@@ -434,6 +477,10 @@ class ConversationManager {
           const lastTransaction = await getLastTransaction(this.customerId);
           return { transaction: lastTransaction, found: !!lastTransaction };
 
+        case 'get_last_bill_payment':
+          const lastBillPayment = await getLastBillPayment(this.customerId, parameters.paymentType || null);
+          return { billPayment: lastBillPayment, found: !!lastBillPayment };
+
         case 'search_beneficiaries':
           const beneficiaries = await searchBeneficiaries(this.customerId, parameters.name);
           return { beneficiaries, count: beneficiaries.length };
@@ -470,7 +517,7 @@ class ConversationManager {
         return await this.handleQueryTransactions(parameters);
 
       case 'query_bill_payment':
-        return await this.handleQueryBillPayments(parameters);
+        return await this.handleQueryBillPayments(parameters, originalMessage);
 
       case 'buy_airtime':
         // buy_airtime should be handled by the message endpoint directly, not here
@@ -573,10 +620,47 @@ class ConversationManager {
       endDate = parseNaturalDate(endDate, true);
     }
 
+    // If no dates provided, get all transactions (user wants all transactions without date range)
     if (!startDate || !endDate) {
-      const response = "I need specific dates to search your transactions. Could you provide a date range?";
+      const limit = 1000; // Get up to 1000 transactions
+      const transactions = await getAllTransactions(
+        this.customerId,
+        transactionType || 'all',
+        limit
+      );
+
+      if (transactions.length === 0) {
+        const response = "You don't have any transactions yet.";
+        this.conversationHistory.push({ role: 'assistant', content: response });
+        return { response, action: null };
+      }
+
+      // Calculate totals
+      const totalSpent = transactions
+        .filter(t => t.transactionType === 'debit')
+        .reduce((sum, t) => sum + (t.amount || 0), 0);
+      
+      const totalReceived = transactions
+        .filter(t => t.transactionType === 'credit')
+        .reduce((sum, t) => sum + (t.amount || 0), 0);
+
+      let response = `I found ${transactions.length} transaction(s) in your account.`;
+      
+      if (totalSpent > 0 || totalReceived > 0) {
+        const parts = [];
+        if (totalSpent > 0) {
+          parts.push(`Total spent: ₦${totalSpent.toLocaleString()}`);
+        }
+        if (totalReceived > 0) {
+          parts.push(`Total received: ₦${totalReceived.toLocaleString()}`);
+        }
+        if (parts.length > 0) {
+          response += ` ${parts.join('. ')}.`;
+        }
+      }
+      
       this.conversationHistory.push({ role: 'assistant', content: response });
-      return { response, action: null };
+      return { response, action: null, data: { transactions, totalSpent, totalReceived } };
     }
 
     const transactions = await getTransactionsByDateRange(
@@ -628,8 +712,12 @@ class ConversationManager {
   /**
    * Handle bill payment queries (airtime, data, cable, internet, electricity)
    */
-  async handleQueryBillPayments(parameters) {
+  async handleQueryBillPayments(parameters, originalMessage = '') {
     let { startDate, endDate, transactionType } = parameters;
+    
+    // Check if this is a "last" or "most recent" query
+    const lastKeywords = /\b(last|most recent|recent|latest|previous)\b/i;
+    const isLastQuery = lastKeywords.test(originalMessage) && (!startDate && !endDate);
     
     // Map transactionType to paymentType for bill payments
     let paymentType = null;
@@ -642,6 +730,56 @@ class ConversationManager {
         'electricity': 'electricity',
       };
       paymentType = typeMap[transactionType.toLowerCase()] || transactionType.toLowerCase();
+    }
+    
+    // If payment type not in parameters, try to extract from original message
+    if (!paymentType && originalMessage) {
+      const messageLower = originalMessage.toLowerCase();
+      const paymentTypeKeywords = {
+        'airtime': /\b(airtime|air time)\b/i,
+        'data': /\b(data|internet data|mobile data)\b/i,
+        'cable': /\b(cable|cable tv|dstv|gotv|startimes)\b/i,
+        'internet': /\b(internet|broadband)\b/i,
+        'electricity': /\b(electricity|electric|power|prepaid|postpaid)\b/i,
+      };
+      
+      for (const [type, regex] of Object.entries(paymentTypeKeywords)) {
+        if (regex.test(originalMessage)) {
+          paymentType = type;
+          break;
+        }
+      }
+    }
+
+    // If this is a "last" query, use getLastBillPayment instead
+    if (isLastQuery) {
+      const lastBillPayment = await getLastBillPayment(this.customerId, paymentType);
+      
+      if (!lastBillPayment) {
+        const typeText = paymentType ? paymentType : 'bill payment';
+        const response = `You don't have any ${typeText} records.`;
+        this.conversationHistory.push({ role: 'assistant', content: response });
+        return { response, action: null };
+      }
+
+      // Format response with details
+      const date = new Date(lastBillPayment.payment_date).toLocaleDateString('en-NG');
+      const time = new Date(lastBillPayment.payment_date).toLocaleTimeString('en-NG', { hour: '2-digit', minute: '2-digit' });
+      let response = `Your last ${paymentType || 'bill payment'} was on ${date} at ${time}. `;
+      response += `Amount: ₦${lastBillPayment.amount.toLocaleString()}. `;
+      
+      if (lastBillPayment.phone_number) {
+        response += `Phone number: ${lastBillPayment.phone_number}. `;
+      }
+      if (lastBillPayment.provider) {
+        response += `Provider: ${lastBillPayment.provider}. `;
+      }
+      if (lastBillPayment.status) {
+        response += `Status: ${lastBillPayment.status}.`;
+      }
+      
+      this.conversationHistory.push({ role: 'assistant', content: response });
+      return { response, action: null, data: { billPayment: lastBillPayment } };
     }
 
     // Parse natural language dates

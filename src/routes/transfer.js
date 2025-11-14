@@ -179,14 +179,40 @@ async function processTransferRequest(message, customerId) {
     };
   }
 
-  // Check if message contains an account number (10 digits)
-  const accountNumberMatch = message.match(/\b(\d{10})\b/);
+  // Check if message contains an account number (can be with spaces, dashes, etc.)
+  // Try various patterns: "1234 5678 90", "1234-5678-90", "1234567890", etc.
+  const { normalizeAccountNumber } = require('../utils/networkDetector');
+  
+  const accountNumberPatterns = [
+    // Pattern for account numbers with spaces/dashes: "1234 5678 90" or "1234-5678-90"
+    /\b(\d{4}[\s\-]?\d{4}[\s\-]?\d{2})\b/,
+    // Pattern for account numbers with spaces: "1234 567890"
+    /\b(\d{4}\s+\d{6})\b/,
+    // Pattern for account numbers with dashes: "1234-567890"
+    /\b(\d{4}-\d{6})\b/,
+    // Pattern for 10 consecutive digits (standard format)
+    /\b(\d{10})\b/,
+    // Pattern for 9 or 11 digits (some banks)
+    /\b(\d{9,11})\b/,
+  ];
+
   let accountNumber = null;
   let recipientName = null;
 
-  if (accountNumberMatch) {
-    // Account number found - verify it
-    accountNumber = accountNumberMatch[1];
+  // Try to extract account number using various patterns
+  for (const pattern of accountNumberPatterns) {
+    const match = message.match(pattern);
+    if (match) {
+      const normalized = normalizeAccountNumber(match[1]);
+      if (normalized) {
+        accountNumber = normalized;
+        break;
+      }
+    }
+  }
+
+  if (accountNumber) {
+    // Account number found and normalized - will verify it later
   } else {
     // Try to extract recipient name (simple extraction - can be improved)
     const namePatterns = [
@@ -459,8 +485,22 @@ async function handleAccountSelection(message, pendingTransaction) {
 async function continueTransferAfterAccountSelection(pendingTransaction) {
   const amount = pendingTransaction.amount || pendingTransaction.data?.amount;
   const accountId = pendingTransaction.accountId;
-  const accountNumber = pendingTransaction.accountNumber || pendingTransaction.data?.accountNumber;
+  let accountNumber = pendingTransaction.accountNumber || pendingTransaction.data?.accountNumber;
   const recipientName = pendingTransaction.recipientName || pendingTransaction.data?.recipientName;
+
+  // Normalize account number if provided
+  if (accountNumber) {
+    const { normalizeAccountNumber } = require('../utils/networkDetector');
+    const normalized = normalizeAccountNumber(accountNumber);
+    if (normalized) {
+      accountNumber = normalized;
+    } else {
+      return {
+        response: `Invalid account number format: ${accountNumber}. Please provide a valid account number.`,
+        action: null,
+      };
+    }
+  }
 
   // If account number is provided, verify it first
   if (accountNumber) {

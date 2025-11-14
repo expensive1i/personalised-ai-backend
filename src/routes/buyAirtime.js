@@ -52,10 +52,19 @@ async function processBuyAirtimeRequest(message, customerId) {
     phoneNumber = customer.phoneNumber;
     normalizedPhone = normalizePhone(phoneNumber);
   } else {
-    // Extract phone number from message (look for patterns like "to 07016409616", "for 08012345678", etc.)
+    // Extract phone number from message - handle various formats including spaces
+    // Try to find phone numbers in various formats: "to 080 1234 5678", "for +234 801 234 5678", etc.
     const phonePatterns = [
-      /(?:to|for|send|buy)\s+(\+?234?\d{10,11})/i,
-      /(\+?234?\d{10,11})/,
+      // Pattern for phone numbers with spaces/dashes after "to", "for", "send", "buy"
+      /(?:to|for|send|buy)\s+([\+]?234?\s?[0-7]\d{2}[\s\-]?\d{3}[\s\-]?\d{4})/i,
+      // Pattern for phone numbers with +234 prefix and spaces
+      /(\+234\s?[0-7]\d{2}[\s\-]?\d{3}[\s\-]?\d{4})/i,
+      // Pattern for phone numbers starting with 234 and spaces
+      /(234\s?[0-7]\d{2}[\s\-]?\d{3}[\s\-]?\d{4})/i,
+      // Pattern for phone numbers starting with 0 and spaces
+      /(0[0-7]\d{2}[\s\-]?\d{3}[\s\-]?\d{4})/i,
+      // Pattern for phone numbers without spaces (fallback)
+      /(\+?234?\d{10,11})/i,
       /(\d{11})/,
     ];
 
@@ -70,10 +79,11 @@ async function processBuyAirtimeRequest(message, customerId) {
     if (!phoneNumber) {
       return {
         success: false,
-        response: "I need the phone number to send airtime to. For example: 'buy airtime 1000 to 07016409616'",
+        response: "I need the phone number to send airtime to. For example: 'buy airtime 1000 to 07016409616' or 'buy airtime 1000 to 070 1234 5678'",
       };
     }
 
+    // Normalize the phone number (removes spaces, dashes, converts +234 to 0, etc.)
     normalizedPhone = normalizePhone(phoneNumber);
   }
 

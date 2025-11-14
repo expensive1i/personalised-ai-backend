@@ -142,6 +142,72 @@ async function getTransactionsByTimeRange(customerId, startTime, endTime, transa
 }
 
 /**
+ * Get all transactions for a customer, optionally filtered by type (no date range)
+ */
+async function getAllTransactions(customerId, transactionType = null, limit = null) {
+  try {
+    const where = {
+      customerId: parseInt(customerId),
+      deletedAt: null,
+    };
+
+    // Filter by transaction type if provided
+    if (transactionType && transactionType !== 'all') {
+      if (transactionType.toLowerCase() === 'airtime') {
+        where.OR = [
+          { receiverName: { contains: 'airtime', mode: 'insensitive' } },
+          { bankName: { contains: 'airtime', mode: 'insensitive' } },
+          { transactionType: 'debit' },
+        ];
+      } else {
+        where.transactionType = transactionType.toLowerCase();
+      }
+    }
+
+    const queryOptions = {
+      where,
+      orderBy: {
+        transactionDate: 'desc',
+      },
+      include: {
+        account: {
+          select: {
+            id: true,
+            accountNumber: true,
+            bankName: true,
+          },
+        },
+      },
+    };
+
+    // Add limit if specified
+    if (limit && limit > 0) {
+      queryOptions.take = limit;
+    }
+
+    const transactions = await prisma.transaction.findMany(queryOptions);
+
+    // Convert BigInt IDs and Decimal values to numbers for JSON serialization
+    return transactions.map(t => ({
+      ...t,
+      id: Number(t.id),
+      customerId: Number(t.customerId),
+      accountId: Number(t.accountId),
+      amount: t.amount?.toNumber ? t.amount.toNumber() : Number(t.amount),
+      balanceBefore: t.balanceBefore?.toNumber ? t.balanceBefore.toNumber() : Number(t.balanceBefore),
+      balanceAfter: t.balanceAfter?.toNumber ? t.balanceAfter.toNumber() : Number(t.balanceAfter),
+      account: t.account ? {
+        ...t.account,
+        id: Number(t.account.id),
+      } : null,
+    }));
+  } catch (error) {
+    console.error('Error getting all transactions:', error);
+    throw error;
+  }
+}
+
+/**
  * Get transactions within a date range, optionally filtered by type
  */
 async function getTransactionsByDateRange(customerId, startDate, endDate, transactionType = null) {
@@ -805,6 +871,65 @@ async function getBillPaymentsByDateRange(customerId, startDate, endDate, paymen
 }
 
 /**
+ * Get the most recent bill payment for a customer
+ */
+async function getLastBillPayment(customerId, paymentType = null) {
+  try {
+    const where = {
+      customer_id: BigInt(customerId),
+      deleted_at: null,
+    };
+
+    // Filter by payment type if provided (e.g., "airtime", "data", "cable", "internet", "electricity")
+    if (paymentType && paymentType !== 'all') {
+      where.payment_type = {
+        contains: paymentType.toLowerCase(),
+        mode: 'insensitive',
+      };
+    }
+
+    const billPayment = await prisma.bill_payments.findFirst({
+      where,
+      orderBy: {
+        payment_date: 'desc',
+      },
+      include: {
+        accounts: {
+          select: {
+            id: true,
+            accountNumber: true,
+            bankName: true,
+          },
+        },
+      },
+    });
+
+    if (!billPayment) {
+      return null;
+    }
+
+    // Convert BigInt IDs and Decimal values to numbers for JSON serialization
+    billPayment.id = Number(billPayment.id);
+    billPayment.customer_id = Number(billPayment.customer_id);
+    billPayment.account_id = Number(billPayment.account_id);
+    
+    // Convert Decimal fields to numbers
+    billPayment.amount = billPayment.amount?.toNumber ? billPayment.amount.toNumber() : Number(billPayment.amount);
+    billPayment.balance_before = billPayment.balance_before?.toNumber ? billPayment.balance_before.toNumber() : Number(billPayment.balance_before);
+    billPayment.balance_after = billPayment.balance_after?.toNumber ? billPayment.balance_after.toNumber() : Number(billPayment.balance_after);
+    
+    if (billPayment.accounts) {
+      billPayment.accounts.id = Number(billPayment.accounts.id);
+    }
+
+    return billPayment;
+  } catch (error) {
+    console.error('Error getting last bill payment:', error);
+    throw error;
+  }
+}
+
+/**
  * Update customer PIN (hashed)
  */
 async function updateCustomerPIN(customerId, hashedPIN) {
@@ -957,9 +1082,11 @@ async function createCustomer(customerName, phoneNumber, accountNumber, pin, ban
 
 module.exports = {
   getLastTransaction,
+  getAllTransactions,
   getTransactionsByDateRange,
   getTransactionsByTimeRange,
   getBillPaymentsByDateRange,
+  getLastBillPayment,
   searchBeneficiaries,
   getAccountBalance,
   initiateTransfer,

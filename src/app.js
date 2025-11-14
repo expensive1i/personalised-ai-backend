@@ -66,7 +66,7 @@ const swaggerOptions = {
 const swaggerSpec = swaggerJsdoc(swaggerOptions);
 
 // CORS configuration
-const whitelist = ['https://admin-personalized.vercel.app','https://personalize-production-8a33.up.railway.app', 'https://personalised-ai-backend-production.up.railway.app'];
+const whitelist = ['https://admin-personalized.vercel.app','https://personalize-production-8a33.up.railway.app'];
 const corsOptions = {
   origin: function (origin, callback) {
     // Allow requests with no origin (like mobile apps, curl, Postman, or server-to-server requests)

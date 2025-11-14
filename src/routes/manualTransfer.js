@@ -106,25 +106,29 @@ router.post('/', authenticateByPhone, async (req, res) => {
 
     const transferAmount = parseFloat(amount);
 
-    // Validate account number format (10 digits)
-    if (sourceAccountNumber.length !== 10 || !/^\d+$/.test(sourceAccountNumber)) {
+    // Normalize account numbers (remove spaces, dashes, etc.)
+    const { normalizeAccountNumber } = require('../utils/networkDetector');
+    const normalizedSourceAccount = normalizeAccountNumber(sourceAccountNumber);
+    const normalizedReceiverAccount = normalizeAccountNumber(receiverAccountNumber);
+
+    if (!normalizedSourceAccount) {
       return res.status(400).json({
         success: false,
         error: 'Invalid source account number format',
-        message: 'Source account number must be exactly 10 digits',
+        message: 'Source account number must be a valid 10-digit number (spaces and dashes are allowed)',
       });
     }
 
-    if (receiverAccountNumber.length !== 10 || !/^\d+$/.test(receiverAccountNumber)) {
+    if (!normalizedReceiverAccount) {
       return res.status(400).json({
         success: false,
         error: 'Invalid receiver account number format',
-        message: 'Receiver account number must be exactly 10 digits',
+        message: 'Receiver account number must be a valid 10-digit number (spaces and dashes are allowed)',
       });
     }
 
-    // Check if source and receiver are the same
-    if (sourceAccountNumber === receiverAccountNumber) {
+    // Check if source and receiver are the same (compare normalized values)
+    if (normalizedSourceAccount === normalizedReceiverAccount) {
       return res.status(400).json({
         success: false,
         error: 'Invalid transfer',
@@ -135,7 +139,7 @@ router.post('/', authenticateByPhone, async (req, res) => {
     // Find source account and verify it belongs to the customer
     const sourceAccount = await prisma.account.findFirst({
       where: {
-        accountNumber: sourceAccountNumber.trim(),
+        accountNumber: normalizedSourceAccount,
         customerId: BigInt(customerId),
         deletedAt: null,
       },
@@ -162,7 +166,7 @@ router.post('/', authenticateByPhone, async (req, res) => {
     // Check if receiver account is in our system
     const receiverAccount = await prisma.account.findFirst({
       where: {
-        accountNumber: receiverAccountNumber.trim(),
+        accountNumber: normalizedReceiverAccount,
         deletedAt: null,
       },
       include: {
@@ -181,15 +185,15 @@ router.post('/', authenticateByPhone, async (req, res) => {
       customerId: customerId,
       data: {
         accountId: Number(sourceAccount.id),
-        sourceAccountNumber: sourceAccountNumber.trim(),
-        receiverAccountNumber: receiverAccountNumber.trim(),
+        sourceAccountNumber: normalizedSourceAccount,
+        receiverAccountNumber: normalizedReceiverAccount,
         beneficiary: {
           id: receiverAccount?.customer?.id ? Number(receiverAccount.customer.id) : null,
           name: receiverAccount?.customer?.customerName || null,
-          accountNumber: receiverAccountNumber.trim(),
+          accountNumber: normalizedReceiverAccount,
           bankName: receiverAccount?.bankName || null,
-          bankAccount: receiverAccountNumber.trim(),
-          last4Digits: receiverAccountNumber.trim().slice(-4),
+          bankAccount: normalizedReceiverAccount,
+          last4Digits: normalizedReceiverAccount.slice(-4),
           source: 'manual_transfer',
         },
         amount: transferAmount,
@@ -199,7 +203,7 @@ router.post('/', authenticateByPhone, async (req, res) => {
 
     return res.json({
       success: true,
-      response: `Transfer of ₦${transferAmount.toLocaleString()} from account ${sourceAccountNumber} to account ${receiverAccountNumber} is ready. Please verify your PIN to complete the transfer.`,
+      response: `Transfer of ₦${transferAmount.toLocaleString()} from account ${normalizedSourceAccount} to account ${normalizedReceiverAccount} is ready. Please verify your PIN to complete the transfer.`,
       transactionId: transactionId,
     });
   } catch (error) {
