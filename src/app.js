@@ -26,7 +26,7 @@ let apiUrl;
 if (process.env.API_URL) {
   apiUrl = process.env.API_URL.replace(/\/$/, '');
 } else if (process.env.NODE_ENV === 'production') {
-  apiUrl = 'https://personalised-ai-backend-production.up.railway.app'; // production server
+  apiUrl = 'https://personalize-production-8a33.up.railway.app';
 } else {
   apiUrl = `http://localhost:${process.env.PORT || 3000}`;
 }
@@ -66,7 +66,7 @@ const swaggerOptions = {
 const swaggerSpec = swaggerJsdoc(swaggerOptions);
 
 // CORS configuration
-const whitelist = ['https://admin-personalized.vercel.app','https://personalize-production-8a33.up.railway.app', 'https://personalised-ai-backend-production.up.railway.app', 'http://localhost:5173'];
+const whitelist = ['https://admin-personalized.vercel.app','https://personalize-production-8a33.up.railway.app'];
 const corsOptions = {
   origin: function (origin, callback) {
     // Allow requests with no origin (like mobile apps, curl, Postman, or server-to-server requests)

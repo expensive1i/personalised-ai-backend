@@ -11,7 +11,7 @@ const {
   initiateTransfer,
   getCustomerById,
 } = require('./database');
-const { normalizePhone } = require('../utils/networkDetector');
+const { normalizePhone, normalizeAccountNumber } = require('../utils/networkDetector');
 
 /**
  * Conversation Manager - Handles multi-turn dialogues and natural language queries
@@ -218,7 +218,7 @@ class ConversationManager {
       },
       {
         name: 'get_account_balance',
-        description: 'Get account balance for the customer. Use for "balance", "how much money", "account balance" queries.',
+        description: 'Get account BALANCE (the amount of money) for the customer. Use ONLY for queries about: "balance", "how much money", "account balance", "what is my balance", "how much do I have". DO NOT use for queries about account NUMBER (the 10-digit identifier).',
         input_schema: {
           type: 'object',
           properties: {},
@@ -226,7 +226,7 @@ class ConversationManager {
       },
       {
         name: 'get_customer_info',
-        description: 'Get customer information including name, phone, account number, bank name.',
+        description: 'Get customer information including name, phone, ACCOUNT NUMBER (the 10-digit identifier), bank name. Use for queries about: "what is my account number", "my account number", "account number", "what account number do I have". This returns the account number (e.g., "1234567890"), NOT the balance.',
         input_schema: {
           type: 'object',
           properties: {},
@@ -532,6 +532,9 @@ class ConversationManager {
 
       case 'check_balance':
         return await this.handleCheckBalance();
+
+      case 'get_account_number':
+        return await this.handleGetAccountNumber();
 
       default:
         // Fallback to Claude for unclear intents
@@ -908,13 +911,50 @@ class ConversationManager {
       return { response, action: null };
     }
 
-    const balanceText = accounts.map(acc => 
-      `Account ${acc.accountNumber}: ₦${acc.balance.toLocaleString()} ${acc.currency}`
-    ).join('\n');
+    const balanceText = accounts.map(acc => {
+      const normalizedAccountNumber = normalizeAccountNumber(acc.accountNumber) || acc.accountNumber;
+      return `Account ${normalizedAccountNumber}: ₦${acc.balance.toLocaleString()} ${acc.currency}`;
+    }).join('\n');
 
     const response = `Your account balance(s):\n${balanceText}`;
     this.conversationHistory.push({ role: 'assistant', content: response });
     return { response, action: null, data: { accounts } };
+  }
+
+  /**
+   * Handle account number query
+   */
+  async handleGetAccountNumber() {
+    const customer = await getCustomerById(this.customerId);
+
+    if (!customer) {
+      const response = "I couldn't find your account information.";
+      this.conversationHistory.push({ role: 'assistant', content: response });
+      return { response, action: null };
+    }
+
+    // Get all accounts for the customer
+    const accounts = await getAccountBalance(this.customerId);
+
+    if (accounts.length === 0) {
+      const response = "You don't have any active accounts.";
+      this.conversationHistory.push({ role: 'assistant', content: response });
+      return { response, action: null };
+    }
+
+    // Format account numbers - normalize to remove spaces
+    if (accounts.length === 1) {
+      const normalizedAccountNumber = normalizeAccountNumber(accounts[0].accountNumber) || accounts[0].accountNumber;
+      const response = `Your account number is ${normalizedAccountNumber}.`;
+      this.conversationHistory.push({ role: 'assistant', content: response });
+      return { response, action: null, data: { accountNumber: normalizedAccountNumber } };
+    } else {
+      const normalizedAccountNumbers = accounts.map(acc => normalizeAccountNumber(acc.accountNumber) || acc.accountNumber);
+      const accountNumbersText = normalizedAccountNumbers.join(', ');
+      const response = `You have ${accounts.length} accounts. Your account numbers are: ${accountNumbersText}.`;
+      this.conversationHistory.push({ role: 'assistant', content: response });
+      return { response, action: null, data: { accountNumbers: normalizedAccountNumbers } };
+    }
   }
 
   /**

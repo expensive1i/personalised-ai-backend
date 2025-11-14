@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { authenticateByPhone } = require('../middleware/auth');
 const { generateAccountNumber, getAccountBalance, prisma } = require('../services/database');
+const { normalizeAccountNumber } = require('../utils/networkDetector');
 
 /**
  * @swagger
@@ -207,7 +208,7 @@ router.get('/list-accounts', authenticateByPhone, async (req, res) => {
         totalBalance: totalBalance,
         accounts: accounts.map(acc => ({
           id: acc.id,
-          accountNumber: acc.accountNumber,
+          accountNumber: normalizeAccountNumber(acc.accountNumber) || acc.accountNumber,
           balance: acc.balance,
           currency: acc.currency || 'NGN',
           bankName: acc.bankName,
@@ -291,11 +292,14 @@ router.get('/balance', authenticateByPhone, async (req, res) => {
     // Get first account balance
     const account = accounts[0];
 
+    // Normalize account number to remove spaces
+    const normalizedAccountNumber = normalizeAccountNumber(account.accountNumber) || account.accountNumber;
+    
     res.json({
       success: true,
       response: `Your account balance is ₦${account.balance.toLocaleString()}`,
       data: {
-        accountNumber: account.accountNumber,
+        accountNumber: normalizedAccountNumber,
         balance: account.balance,
         currency: account.currency,
         bankName: account.bankName,

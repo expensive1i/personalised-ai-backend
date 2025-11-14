@@ -433,7 +433,9 @@ validatePhoneRouter.post('/', async (req, res) => {
       });
     }
 
-    const normalizedPhone = phoneNumber.trim().replace(/\s+/g, '');
+    // Use enhanced phone normalization to handle voice-to-text errors and symbols
+    const { normalizePhone } = require('../utils/networkDetector');
+    const normalizedPhone = normalizePhone(phoneNumber) || phoneNumber.trim().replace(/\s+/g, '');
 
     const user = await prisma.customer.findFirst({
       where: {

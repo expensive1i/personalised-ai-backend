@@ -243,6 +243,7 @@ router.post('/', authenticateByPhone, async (req, res) => {
       case 'query_transaction':
       case 'query_bill_payment':
       case 'check_balance':
+      case 'get_account_number':
       case 'get_last_transaction':
       case 'general_question':
         // Route to query AI handler using ConversationManager

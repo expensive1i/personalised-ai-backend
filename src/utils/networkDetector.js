@@ -73,7 +73,8 @@ function detectNetwork(phone) {
 /**
  * Format phone number to standard format (08012345678)
  * Handles various formats including spaces, dashes, parentheses, etc.
- * @param {string} phone - Phone number in any format (e.g., "080 1234 5678", "+234 801 234 5678", "080-123-4567")
+ * Also handles voice-to-text transcription errors (e.g., "oh" for "0", "one" for "1")
+ * @param {string} phone - Phone number in any format (e.g., "080 1234 5678", "+234 801 234 5678", "080-123-4567", "oh eight oh one two three four five six seven eight")
  * @returns {string} Normalized phone number (11 digits starting with 0) or null if invalid
  */
 function normalizePhone(phone) {
@@ -81,38 +82,103 @@ function normalizePhone(phone) {
     return null;
   }
 
-  // Remove all non-digit characters except + at the start
-  // This handles: spaces, dashes, parentheses, dots, etc.
-  let cleaned = phone.trim();
+  // Step 1: Convert to lowercase for easier processing
+  let cleaned = phone.trim().toLowerCase();
   
-  // Remove +234 prefix if present
-  if (cleaned.startsWith('+234')) {
-    cleaned = '0' + cleaned.substring(4);
-  } else if (cleaned.startsWith('234')) {
-    cleaned = '0' + cleaned.substring(3);
+  // Step 2: Handle common voice-to-text errors - replace word numbers with digits
+  // This handles cases like "oh eight oh" instead of "080"
+  const wordToDigit = {
+    'zero': '0', 'oh': '0', 'o': '0',
+    'one': '1', 'won': '1',
+    'two': '2', 'to': '2', 'too': '2',
+    'three': '3', 'tree': '3',
+    'four': '4', 'for': '4', 'fore': '4',
+    'five': '5', 'fife': '5',
+    'six': '6', 'sicks': '6',
+    'seven': '7', 'sevin': '7',
+    'eight': '8', 'ate': '8',
+    'nine': '9', 'nein': '9',
+  };
+  
+  // Replace word numbers with digits (handle both standalone and in context)
+  for (const [word, digit] of Object.entries(wordToDigit)) {
+    // Match whole words only (with word boundaries)
+    const regex = new RegExp(`\\b${word}\\b`, 'gi');
+    cleaned = cleaned.replace(regex, digit);
   }
   
-  // Remove all non-digit characters (spaces, dashes, parentheses, dots, etc.)
+  // Step 3: Remove common voice-to-text artifacts and symbols
+  // Remove common punctuation and symbols that might appear in voice transcription
+  cleaned = cleaned
+    .replace(/[^\d\+\s\-\(\)\.]/g, '') // Remove all except digits, +, spaces, dashes, parentheses, dots
+    .replace(/\s+/g, '') // Remove all spaces
+    .replace(/[\(\)\.]/g, ''); // Remove parentheses and dots
+  
+  // Step 4: Handle country code prefixes
+  // Remove +234 prefix if present (with or without spaces)
+  if (cleaned.startsWith('+234')) {
+    cleaned = '0' + cleaned.substring(4).replace(/\D/g, '');
+  } else if (cleaned.startsWith('234')) {
+    // Handle 234 without + (might have spaces or other chars)
+    cleaned = cleaned.replace(/^234/, '0');
+  }
+  
+  // Step 5: Remove all remaining non-digit characters
   cleaned = cleaned.replace(/\D/g, '');
   
-  // If it starts with 234 (without +), convert to 0
+  // Step 6: Handle 234 prefix if it appears after cleaning (13 digits total)
   if (cleaned.startsWith('234') && cleaned.length === 13) {
     cleaned = '0' + cleaned.substring(3);
   }
   
-  // Ensure it starts with 0 and is 11 digits
-  if (!cleaned.startsWith('0')) {
-    cleaned = '0' + cleaned;
+  // Step 7: Ensure it starts with 0
+  if (!cleaned.startsWith('0') && cleaned.length > 0) {
+    // If it doesn't start with 0, check if it's a valid 10-digit number
+    if (cleaned.length === 10 && /^[0-7]\d{9}$/.test(cleaned)) {
+      cleaned = '0' + cleaned;
+    } else if (cleaned.length === 9 && /^[0-7]\d{8}$/.test(cleaned)) {
+      cleaned = '0' + cleaned;
+    } else if (cleaned.length >= 10) {
+      // If it's longer, try to extract the last 10 digits and add 0
+      const last10 = cleaned.slice(-10);
+      if (/^[0-7]\d{9}$/.test(last10)) {
+        cleaned = '0' + last10;
+      } else {
+        cleaned = '0' + cleaned;
+      }
+    } else {
+      cleaned = '0' + cleaned;
+    }
   }
   
-  // Validate: should be exactly 11 digits starting with 0
+  // Step 8: Validate and return
+  // Nigerian phone numbers should be 11 digits starting with 0
+  // First digit after 0 should be 0-7 (network codes)
   if (cleaned.length === 11 && /^0[0-7]\d{9}$/.test(cleaned)) {
     return cleaned;
   }
   
-  // If it's 10 digits, add 0 at the start
+  // If it's 10 digits and valid, add 0 at the start
   if (cleaned.length === 10 && /^[0-7]\d{9}$/.test(cleaned)) {
     return '0' + cleaned;
+  }
+  
+  // If it's 12 digits, might have an extra leading digit - try removing first digit
+  if (cleaned.length === 12 && cleaned.startsWith('0')) {
+    const withoutFirst = cleaned.substring(1);
+    if (/^0[0-7]\d{9}$/.test(withoutFirst)) {
+      return withoutFirst;
+    }
+  }
+  
+  // Last resort: if we have 11 digits but doesn't match pattern, still return if it starts with 0
+  // This is more forgiving for edge cases from voice transcription
+  if (cleaned.length === 11 && cleaned.startsWith('0') && /^\d{11}$/.test(cleaned)) {
+    // Check if second digit is 0-7 (network code)
+    const secondDigit = parseInt(cleaned[1]);
+    if (secondDigit >= 0 && secondDigit <= 7) {
+      return cleaned;
+    }
   }
   
   return null;
@@ -121,7 +187,8 @@ function normalizePhone(phone) {
 /**
  * Normalize account number to standard format (digits only)
  * Handles various formats including spaces, dashes, etc.
- * @param {string} accountNumber - Account number in any format (e.g., "1234 5678 90", "1234-5678-90", "1234567890")
+ * Also handles voice-to-text transcription errors (e.g., "one" for "1", "two" for "2")
+ * @param {string} accountNumber - Account number in any format (e.g., "1234 5678 90", "1234-5678-90", "1234567890", "one two three four five six seven eight nine zero")
  * @returns {string} Normalized account number (digits only) or null if invalid
  */
 function normalizeAccountNumber(accountNumber) {
@@ -129,21 +196,72 @@ function normalizeAccountNumber(accountNumber) {
     return null;
   }
 
-  // Remove all non-digit characters (spaces, dashes, dots, etc.)
-  let cleaned = accountNumber.trim().replace(/\D/g, '');
-
+  // Step 1: Convert to lowercase for easier processing
+  let cleaned = accountNumber.trim().toLowerCase();
+  
+  // Step 2: Handle common voice-to-text errors - replace word numbers with digits
+  // This handles cases like "one two three" instead of "123"
+  const wordToDigit = {
+    'zero': '0', 'oh': '0', 'o': '0',
+    'one': '1', 'won': '1',
+    'two': '2', 'to': '2', 'too': '2',
+    'three': '3', 'tree': '3',
+    'four': '4', 'for': '4', 'fore': '4',
+    'five': '5', 'fife': '5',
+    'six': '6', 'sicks': '6',
+    'seven': '7', 'sevin': '7',
+    'eight': '8', 'ate': '8',
+    'nine': '9', 'nein': '9',
+  };
+  
+  // Replace word numbers with digits (handle both standalone and in context)
+  for (const [word, digit] of Object.entries(wordToDigit)) {
+    // Match whole words only (with word boundaries)
+    const regex = new RegExp(`\\b${word}\\b`, 'gi');
+    cleaned = cleaned.replace(regex, digit);
+  }
+  
+  // Step 3: Remove common voice-to-text artifacts and symbols
+  // Remove common punctuation and symbols that might appear in voice transcription
+  cleaned = cleaned
+    .replace(/[^\d\s\-\(\)\.]/g, '') // Remove all except digits, spaces, dashes, parentheses, dots
+    .replace(/\s+/g, '') // Remove all spaces
+    .replace(/[\(\)\.]/g, ''); // Remove parentheses and dots
+  
+  // Step 4: Remove all remaining non-digit characters (dashes, etc.)
+  cleaned = cleaned.replace(/\D/g, '');
+  
+  // Step 5: Validate and return
   // Nigerian bank account numbers are typically 10 digits
   // Some banks may have different lengths, but 10 is the most common
-  // Validate: should be 10 digits
   if (cleaned.length === 10 && /^\d{10}$/.test(cleaned)) {
     return cleaned;
   }
-
+  
   // Some account numbers might be 9 or 11 digits - accept them if they're all digits
   if ((cleaned.length === 9 || cleaned.length === 11) && /^\d+$/.test(cleaned)) {
     return cleaned;
   }
-
+  
+  // If it's 8 digits, might be missing leading zero - try adding it
+  if (cleaned.length === 8 && /^\d{8}$/.test(cleaned)) {
+    return '0' + cleaned;
+  }
+  
+  // If it's 12 digits, might have an extra leading digit - try removing first digit
+  if (cleaned.length === 12 && /^\d{12}$/.test(cleaned)) {
+    const withoutFirst = cleaned.substring(1);
+    if (/^\d{10}$/.test(withoutFirst)) {
+      return withoutFirst;
+    }
+  }
+  
+  // Last resort: if we have 10 digits but doesn't match strict pattern, still return if all digits
+  // This is more forgiving for edge cases from voice transcription
+  if (cleaned.length === 10 && /^\d{10}$/.test(cleaned)) {
+    return cleaned;
+  }
+  
   return null;
 }
 

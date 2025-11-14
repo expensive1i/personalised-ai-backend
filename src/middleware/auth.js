@@ -1,4 +1,5 @@
 const { getCustomerByPhone } = require('../services/database');
+const { normalizePhone } = require('../utils/networkDetector');
 
 /**
  * Authentication middleware - validates customer by phone number
@@ -26,8 +27,8 @@ async function authenticateByPhone(req, res, next) {
       });
     }
 
-    // Normalize phone number (remove spaces, ensure consistent format)
-    const normalizedPhone = phoneNumber.toString().trim().replace(/\s+/g, '');
+    // Normalize phone number using enhanced normalization (handles voice-to-text errors, symbols, etc.)
+    const normalizedPhone = normalizePhone(phoneNumber.toString()) || phoneNumber.toString().trim().replace(/\s+/g, '');
 
     // Get customer by phone number
     const customer = await getCustomerByPhone(normalizedPhone);
