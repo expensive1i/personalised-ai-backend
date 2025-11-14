@@ -437,7 +437,11 @@ validatePhoneRouter.post('/', async (req, res) => {
     const { normalizePhone } = require('../utils/networkDetector');
     const normalizedPhone = normalizePhone(phoneNumber) || phoneNumber.trim().replace(/\s+/g, '');
 
-    const user = await prisma.customer.findFirst({
+    console.log(`[validate-phone-number] Looking up phone: ${phoneNumber} -> normalized: ${normalizedPhone}`);
+
+    // Try multiple phone number formats to find the customer
+    // First try with normalized phone (e.g., "08143002447")
+    let user = await prisma.customer.findFirst({
       where: {
         phoneNumber: normalizedPhone,
         deletedAt: null,
@@ -477,13 +481,114 @@ validatePhoneRouter.post('/', async (req, res) => {
       },
     });
 
+    // If not found with normalized format, try +234 format
     if (!user) {
+      const originalPhone = phoneNumber.toString().trim();
+      const plus234Format = originalPhone.startsWith('+234') ? originalPhone : 
+                           originalPhone.startsWith('234') ? '+' + originalPhone :
+                           originalPhone.startsWith('0') ? '+234' + originalPhone.substring(1) : null;
+      
+      if (plus234Format && plus234Format !== normalizedPhone) {
+        console.log(`[validate-phone-number] Trying +234 format: ${plus234Format}`);
+        user = await prisma.customer.findFirst({
+          where: {
+            phoneNumber: plus234Format,
+            deletedAt: null,
+          },
+          include: {
+            accounts: {
+              where: {
+                deletedAt: null,
+              },
+              orderBy: {
+                createdAt: 'asc',
+              },
+            },
+            transactions: {
+              where: {
+                deletedAt: null,
+              },
+              orderBy: {
+                transactionDate: 'desc',
+              },
+              take: 50,
+            },
+            bill_payments: {
+              where: {
+                deleted_at: null,
+              },
+              orderBy: {
+                payment_date: 'desc',
+              },
+              take: 50,
+            },
+            beneficiaries: {
+              where: {
+                deletedAt: null,
+              },
+            },
+          },
+        });
+      }
+    }
+
+    // If still not found, try the original format as-is
+    if (!user) {
+      const originalPhone = phoneNumber.toString().trim();
+      if (originalPhone !== normalizedPhone) {
+        console.log(`[validate-phone-number] Trying original format: ${originalPhone}`);
+        user = await prisma.customer.findFirst({
+          where: {
+            phoneNumber: originalPhone,
+            deletedAt: null,
+          },
+          include: {
+            accounts: {
+              where: {
+                deletedAt: null,
+              },
+              orderBy: {
+                createdAt: 'asc',
+              },
+            },
+            transactions: {
+              where: {
+                deletedAt: null,
+              },
+              orderBy: {
+                transactionDate: 'desc',
+              },
+              take: 50,
+            },
+            bill_payments: {
+              where: {
+                deleted_at: null,
+              },
+              orderBy: {
+                payment_date: 'desc',
+              },
+              take: 50,
+            },
+            beneficiaries: {
+              where: {
+                deletedAt: null,
+              },
+            },
+          },
+        });
+      }
+    }
+
+    if (!user) {
+      console.log(`[validate-phone-number] User not found for phone: ${phoneNumber} (tried: ${normalizedPhone})`);
       return res.json({
         success: true,
         response: 'User not found',
         data: null,
       });
     }
+
+    console.log(`[validate-phone-number] User found: ${user.customerName} (${user.phoneNumber})`);
 
     // Calculate total balance across all accounts
     const totalBalance = user.accounts.reduce((sum, acc) => {

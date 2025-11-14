@@ -841,6 +841,7 @@ async function getBillPaymentsByDateRange(customerId, startDate, endDate, paymen
   try {
     // Parse dates and set to start/end of day to include all payments for that day
     // Use UTC to ensure consistency across timezones
+    // Database stores payment_date in UTC format: 2025-08-18T04:40:21.500+00:00
     // startDate should be at 00:00:00.000 UTC
     let startDateObj;
     if (typeof startDate === 'string' && startDate.match(/^\d{4}-\d{2}-\d{2}$/)) {
@@ -859,6 +860,13 @@ async function getBillPaymentsByDateRange(customerId, startDate, endDate, paymen
       endDateObj.setUTCHours(23, 59, 59, 999);
     }
     
+    console.log(`[getBillPaymentsByDateRange] Querying bill_payments for customer ${customerId}:`);
+    console.log(`  - startDate input: ${startDate}`);
+    console.log(`  - endDate input: ${endDate}`);
+    console.log(`  - startDateObj (UTC): ${startDateObj.toISOString()}`);
+    console.log(`  - endDateObj (UTC): ${endDateObj.toISOString()}`);
+    console.log(`  - paymentType: ${paymentType || 'all'}`);
+    
     const where = {
       customer_id: BigInt(customerId),
       deleted_at: null,
@@ -876,6 +884,16 @@ async function getBillPaymentsByDateRange(customerId, startDate, endDate, paymen
       };
     }
 
+    console.log(`  - Query where clause:`, JSON.stringify({
+      customer_id: customerId.toString(),
+      deleted_at: null,
+      payment_date: {
+        gte: startDateObj.toISOString(),
+        lte: endDateObj.toISOString(),
+      },
+      payment_type: paymentType && paymentType !== 'all' ? { contains: paymentType.toLowerCase() } : undefined,
+    }, null, 2));
+
     const billPayments = await prisma.bill_payments.findMany({
       where,
       orderBy: {
@@ -891,6 +909,11 @@ async function getBillPaymentsByDateRange(customerId, startDate, endDate, paymen
         },
       },
     });
+
+    console.log(`  - Found ${billPayments.length} bill payment(s)`);
+    if (billPayments.length > 0) {
+      console.log(`  - Sample payment_date: ${billPayments[0].payment_date}`);
+    }
 
     // Convert BigInt IDs and Decimal values to numbers for JSON serialization
     return billPayments.map(bp => ({

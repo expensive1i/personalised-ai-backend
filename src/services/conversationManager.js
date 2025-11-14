@@ -438,11 +438,13 @@ class ConversationManager {
           }
           
           // If no dates provided, get all bill payments (or last 30 days)
+          // Use UTC dates to match database timezone
           if (!billStartDate || !billEndDate) {
-            const thirtyDaysAgo = new Date();
-            thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+            const now = new Date();
+            const thirtyDaysAgo = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - 30));
+            const today = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
             billStartDate = billStartDate || thirtyDaysAgo.toISOString().split('T')[0];
-            billEndDate = billEndDate || new Date().toISOString().split('T')[0];
+            billEndDate = billEndDate || today.toISOString().split('T')[0];
           }
           
           // Parse natural language dates (e.g., "today", "yesterday")
@@ -787,18 +789,32 @@ class ConversationManager {
 
     // Parse natural language dates
     if (startDate && !startDate.match(/^\d{4}-\d{2}-\d{2}$/)) {
-      startDate = parseNaturalDate(startDate, false);
+      const parsedStart = parseNaturalDate(startDate, false);
+      if (parsedStart) {
+        startDate = parsedStart;
+      }
     }
     if (endDate && !endDate.match(/^\d{4}-\d{2}-\d{2}$/)) {
-      endDate = parseNaturalDate(endDate, true);
+      const parsedEnd = parseNaturalDate(endDate, true);
+      if (parsedEnd) {
+        endDate = parsedEnd;
+      }
     }
 
-    // If no dates provided, default to current year
+    // If no dates provided, default to current year (use UTC)
     if (!startDate || !endDate) {
-      const currentYear = new Date().getFullYear();
+      const now = new Date();
+      const currentYear = now.getUTCFullYear();
       startDate = startDate || `${currentYear}-01-01`;
       endDate = endDate || `${currentYear}-12-31`;
     }
+
+    console.log(`[handleQueryBillPayments] Querying bill payments:`);
+    console.log(`  - customerId: ${this.customerId}`);
+    console.log(`  - startDate: ${startDate}`);
+    console.log(`  - endDate: ${endDate}`);
+    console.log(`  - paymentType: ${paymentType || 'all'}`);
+    console.log(`  - originalMessage: ${originalMessage}`);
 
     const billPayments = await getBillPaymentsByDateRange(
       this.customerId,

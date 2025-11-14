@@ -102,14 +102,24 @@ CRITICAL INSTRUCTIONS:
    - "one thousand" = 1000 (if clearly stated)
    - Extract the numeric value regardless of formatting
 
-5. DATE HANDLING - Understand various date formats:
-   - "today" = current date
-   - "yesterday" = yesterday's date
+5. DATE HANDLING - Understand various date formats and extract dates PERFECTLY:
+   - "today" = current date in YYYY-MM-DD format (e.g., "2025-11-14")
+   - "yesterday" = yesterday's date in YYYY-MM-DD format
+   - "tomorrow" = tomorrow's date in YYYY-MM-DD format
+   - "this week" = start of current week
+   - "this month" = start of current month (YYYY-MM-01)
+   - "this year" = start of current year (YYYY-01-01)
    - "last week" = 7 days ago to today
    - "last month" = 1 month ago to today
+   - "last year" = previous year
    - "15-18 June 2025" = 2025-06-15 to 2025-06-18
    - "last 2 hours" = relative time (use startTime/endTime)
-   - Natural language dates should be converted to YYYY-MM-DD format
+   - "How much did I spend on airtime today" = extract startDate: "today", endDate: "today"
+   - "How much did I spend today" = extract startDate: "today", endDate: "today"
+   - "spent on airtime today" = extract startDate: "today", endDate: "today"
+   - CRITICAL: When user says "today", "this week", "this month", "this year" - ALWAYS extract the date
+   - Natural language dates should be converted to YYYY-MM-DD format or kept as natural language (system will parse)
+   - Database uses UTC timestamps (format: 2025-08-18T04:40:21.500+00:00), so dates are interpreted in UTC
 
 6. INTENT DISTINCTION - Critical:
    - "buy_airtime" = User wants to PURCHASE/BUY airtime (action verb: buy, purchase, send airtime)
@@ -214,10 +224,18 @@ You are an intelligent, helpful Nigerian banking assistant with comprehensive un
    - Extract and normalize account numbers before using them in transfers
    - The system's normalizeAccountNumber function will handle all variations automatically - just extract and pass the account number
 
-4. DATE AND TIME HANDLING:
-   - Understand natural language dates: "today", "yesterday", "last week", "last month"
+4. DATE AND TIME HANDLING - Extract dates PERFECTLY:
+   - Understand natural language dates: "today", "yesterday", "tomorrow", "this week", "this month", "this year", "last week", "last month", "last year"
    - Handle date ranges: "15-18 June 2025" = 2025-06-15 to 2025-06-18
    - Handle relative time: "last 2 hours", "last 30 minutes", "last 3 days"
+   - CRITICAL: When user says "today", "this week", "this month", "this year" - ALWAYS extract the date in parameters
+   - Examples:
+     * "How much did I spend on airtime today" → startDate: "today", endDate: "today"
+     * "spent on airtime today" → startDate: "today", endDate: "today"
+     * "airtime today" → startDate: "today", endDate: "today"
+     * "this week" → startDate: "this week", endDate: "today"
+     * "this month" → startDate: "this month", endDate: "today"
+   - Database uses UTC timestamps (format: 2025-08-18T04:40:21.500+00:00), dates are filtered by payment_date field
    - Use appropriate tools (search_transactions with startTime/endTime for precise time queries)
    - For "last" queries (e.g., "last airtime purchase"), use get_last_bill_payment tool
 
@@ -318,6 +336,8 @@ Remember: Your goal is to understand almost anything the user says and provide a
 function parseRelativeTime(timeString) {
   if (!timeString) return null;
 
+  // Use UTC time to ensure consistency with database timestamps
+  // Database stores timestamps in UTC format: 2025-08-18T04:40:21.500+00:00
   const now = new Date();
   const timeStr = timeString.toLowerCase().trim();
   
@@ -329,33 +349,34 @@ function parseRelativeTime(timeString) {
     const amount = parseInt(match[1]);
     const unit = match[2].toLowerCase();
     
+    // Use UTC methods to ensure consistency with database
     const endTime = new Date(now);
     let startTime = new Date(now);
     
     switch (unit) {
       case 'minute':
       case 'minutes':
-        startTime.setMinutes(startTime.getMinutes() - amount);
+        startTime.setUTCMinutes(startTime.getUTCMinutes() - amount);
         break;
       case 'hour':
       case 'hours':
-        startTime.setHours(startTime.getHours() - amount);
+        startTime.setUTCHours(startTime.getUTCHours() - amount);
         break;
       case 'day':
       case 'days':
-        startTime.setDate(startTime.getDate() - amount);
+        startTime.setUTCDate(startTime.getUTCDate() - amount);
         break;
       case 'week':
       case 'weeks':
-        startTime.setDate(startTime.getDate() - (amount * 7));
+        startTime.setUTCDate(startTime.getUTCDate() - (amount * 7));
         break;
       case 'month':
       case 'months':
-        startTime.setMonth(startTime.getMonth() - amount);
+        startTime.setUTCMonth(startTime.getUTCMonth() - amount);
         break;
       case 'year':
       case 'years':
-        startTime.setFullYear(startTime.getFullYear() - amount);
+        startTime.setUTCFullYear(startTime.getUTCFullYear() - amount);
         break;
       default:
         return null;
@@ -373,23 +394,26 @@ function parseRelativeTime(timeString) {
 function parseNaturalDate(dateString, isEndDate = false) {
   if (!dateString) return null;
 
-  const today = new Date();
+  // Use UTC date to ensure consistency with database timestamps
+  // Database stores timestamps in UTC format: 2025-08-18T04:40:21.500+00:00
+  const now = new Date();
+  const today = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
   const dateStr = dateString.toLowerCase().trim();
 
-  // Handle relative dates
+  // Handle relative dates - use UTC to match database timezone
   if (dateStr === 'today' || dateStr === 'now') {
     return today.toISOString().split('T')[0];
   }
   
   if (dateStr === 'yesterday') {
     const yesterday = new Date(today);
-    yesterday.setDate(yesterday.getDate() - 1);
+    yesterday.setUTCDate(yesterday.getUTCDate() - 1);
     return yesterday.toISOString().split('T')[0];
   }
   
   if (dateStr === 'tomorrow') {
     const tomorrow = new Date(today);
-    tomorrow.setDate(tomorrow.getDate() + 1);
+    tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
     return tomorrow.toISOString().split('T')[0];
   }
   
@@ -397,8 +421,49 @@ function parseNaturalDate(dateString, isEndDate = false) {
   if (dateStr.includes('last')) {
     const relativeTime = parseRelativeTime(dateStr);
     if (relativeTime) {
+      // Return the UTC date part
       return relativeTime.startTime.toISOString().split('T')[0];
     }
+  }
+  
+  // Handle "this week", "this month", "this year"
+  if (dateStr.includes('this week')) {
+    const now = new Date();
+    const dayOfWeek = now.getUTCDay(); // 0 = Sunday, 1 = Monday, etc.
+    const startOfWeek = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - dayOfWeek));
+    return startOfWeek.toISOString().split('T')[0];
+  }
+  
+  if (dateStr.includes('this month')) {
+    const now = new Date();
+    const startOfMonth = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+    return startOfMonth.toISOString().split('T')[0];
+  }
+  
+  if (dateStr.includes('this year')) {
+    const now = new Date();
+    const startOfYear = new Date(Date.UTC(now.getUTCFullYear(), 0, 1));
+    return startOfYear.toISOString().split('T')[0];
+  }
+  
+  // Handle "last week", "last month", "last year" (already handled above, but ensure UTC)
+  if (dateStr.includes('last week')) {
+    const now = new Date();
+    const dayOfWeek = now.getUTCDay();
+    const startOfLastWeek = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - dayOfWeek - 7));
+    return startOfLastWeek.toISOString().split('T')[0];
+  }
+  
+  if (dateStr.includes('last month')) {
+    const now = new Date();
+    const startOfLastMonth = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1));
+    return startOfLastMonth.toISOString().split('T')[0];
+  }
+  
+  if (dateStr.includes('last year')) {
+    const now = new Date();
+    const startOfLastYear = new Date(Date.UTC(now.getUTCFullYear() - 1, 0, 1));
+    return startOfLastYear.toISOString().split('T')[0];
   }
 
   // Handle "15-18 June 2025" format
@@ -442,7 +507,9 @@ function parseNaturalDate(dateString, isEndDate = false) {
   try {
     const date = new Date(dateString);
     if (!isNaN(date.getTime())) {
-      return date.toISOString().split('T')[0];
+      // Ensure we return UTC date to match database timezone
+      const utcDate = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+      return utcDate.toISOString().split('T')[0];
     }
   } catch (e) {
     // Fallback
