@@ -476,7 +476,7 @@ async function initiateTransfer(customerId, accountId, recipientData, amount) {
     // Verify customer exists in Customer table
     const customer = await prisma.customer.findFirst({
       where: {
-        id: parseInt(customerId),
+        id: BigInt(customerId),
         deletedAt: null,
       },
       select: {
@@ -494,8 +494,8 @@ async function initiateTransfer(customerId, accountId, recipientData, amount) {
     // Get account and verify it belongs to the customer
     const account = await prisma.account.findFirst({
       where: {
-        id: parseInt(accountId),
-        customerId: parseInt(customerId),
+        id: BigInt(accountId),
+        customerId: BigInt(customerId),
         deletedAt: null,
       },
     });
@@ -505,7 +505,9 @@ async function initiateTransfer(customerId, accountId, recipientData, amount) {
     }
 
     // Verify balance is sufficient
-    if (account.balance < amount) {
+    // Convert account.balance to number if it's a Decimal type
+    const accountBalance = account.balance?.toNumber ? account.balance.toNumber() : Number(account.balance);
+    if (accountBalance < amount) {
       throw new Error('Insufficient balance');
     }
 
@@ -553,15 +555,15 @@ async function initiateTransfer(customerId, accountId, recipientData, amount) {
       // Create debit transaction record for sender
       const senderTransaction = await tx.transaction.create({
         data: {
-          customerId: parseInt(customerId),
-          accountId: parseInt(accountId),
+          customerId: BigInt(customerId),
+          accountId: BigInt(accountId),
           receiverName: recipientData.name,
           bankName: recipientData.bankName || null,
           bankAccount: recipientData.bankAccount || recipientData.accountNumber,
           accountNumber: recipientData.accountNumber,
           amount: parseFloat(amount),
-          balanceBefore: account.balance,
-          balanceAfter: account.balance - parseFloat(amount),
+          balanceBefore: accountBalance,
+          balanceAfter: accountBalance - parseFloat(amount),
           transactionDate: now,
           createdAt: now,
           status: 'success',
@@ -571,9 +573,13 @@ async function initiateTransfer(customerId, accountId, recipientData, amount) {
       });
 
       // Update sender account balance (debit)
+      // Convert account.balance to number if it's a Decimal type
+      const currentBalance = account.balance?.toNumber ? account.balance.toNumber() : Number(account.balance);
+      const newBalance = currentBalance - parseFloat(amount);
+      
       await tx.account.update({
-        where: { id: parseInt(accountId) },
-        data: { balance: account.balance - parseFloat(amount) },
+        where: { id: BigInt(accountId) },
+        data: { balance: newBalance },
       });
 
       // Handle recipient transaction - create record even if recipient doesn't have account in our system
@@ -584,13 +590,14 @@ async function initiateTransfer(customerId, accountId, recipientData, amount) {
 
       if (recipientAccount) {
         // Recipient has account in our system - update balance
-        recipientBalanceBefore = recipientAccount.balance;
+        // Convert balance to number if it's a Decimal type
+        recipientBalanceBefore = recipientAccount.balance?.toNumber ? recipientAccount.balance.toNumber() : Number(recipientAccount.balance);
         recipientBalanceAfter = recipientBalanceBefore + parseFloat(amount);
         recipientAccountId = BigInt(recipientAccount.id);
         recipientCustomerId = BigInt(recipientAccount.customerId);
         
         await tx.account.update({
-          where: { id: recipientAccount.id },
+          where: { id: BigInt(recipientAccount.id) },
           data: { balance: recipientBalanceAfter },
         });
       } else if (recipientCustomer) {
